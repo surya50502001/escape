@@ -13,6 +13,8 @@ export class InputManager {
     aimAngle: 0
   };
 
+  public mouseX: number = 0;
+  public mouseY: number = 0;
   private canvas: HTMLCanvasElement;
   private attackRequested: boolean = false;
   private tackleRequested: boolean = false;
@@ -57,13 +59,13 @@ export class InputManager {
       const rect = this.canvas.getBoundingClientRect();
       const scaleX = this.canvas.width / rect.width;
       const scaleY = this.canvas.height / rect.height;
-      const mouseX = (e.clientX - rect.left) * scaleX;
-      const mouseY = (e.clientY - rect.top) * scaleY;
+      this.mouseX = (e.clientX - rect.left) * scaleX;
+      this.mouseY = (e.clientY - rect.top) * scaleY;
 
       if ((window as unknown as { localPlayerX?: number; localPlayerY?: number }).localPlayerX !== undefined) {
         const px = (window as unknown as { localPlayerX: number }).localPlayerX;
         const py = (window as unknown as { localPlayerY: number }).localPlayerY;
-        this.input.aimAngle = Math.atan2(mouseY - py, mouseX - px);
+        this.input.aimAngle = Math.atan2(this.mouseY - py, this.mouseX - px);
       }
     });
 
@@ -79,6 +81,7 @@ export class InputManager {
       ...this.input,
       attack: this.attackRequested,
       tackle: this.tackleRequested,
+      pull: this.attackRequested || this.tackleRequested,
       interact: this.interactRequested,
       jump: this.jumpRequested
     };

@@ -90,6 +90,7 @@ export function sanitizeInput(raw: unknown): ClientInput | null {
     interact: strictBool(obj.interact),
     attack: strictBool(obj.attack),
     tackle: strictBool(obj.tackle),
+    pull: strictBool(obj.pull),
     aimAngle
   };
 }

@@ -168,6 +168,13 @@ function connectToGame(name: string): void {
               if (ev.x !== undefined && ev.y !== undefined) {
                 renderer.addBloodSparks(ev.x, ev.y, '#94a3b8', 12);
               }
+            } else if (ev.type === 'STEAM_HISS') {
+              sound.playSteamHiss();
+            } else if (ev.type === 'SPIKE_HIT') {
+              sound.playSpikeHit();
+              if (ev.x !== undefined && ev.y !== undefined) {
+                renderer.addBloodSparks(ev.x, ev.y, '#dc2626', 15);
+              }
             }
           }
         }

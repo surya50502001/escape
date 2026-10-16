@@ -242,6 +242,115 @@ describe('The Pit - Complete Multiplayer Audit & Unit Tests', () => {
       assert.ok(victim.stunnedTimer > 0);
       assert.equal(engine.state.rope.state, 'ON_FLOOR');
     });
+
+    it('should allow picking up rope with E and dropping with E when held', () => {
+      const player = engine.addHumanPlayer('p_picker', 'Picker')!;
+      engine.state.rope.state = 'ON_FLOOR';
+      engine.state.rope.x = 200;
+      engine.state.rope.y = FLOOR_Y;
+      player.x = 210;
+      player.y = FLOOR_Y;
+
+      // Pick up with E
+      const pickupInput = createDefaultInput();
+      pickupInput.interact = true;
+      engine.handleInput(player.id, pickupInput);
+
+      assert.equal(engine.state.rope.state, 'HELD');
+      assert.equal(engine.state.rope.heldByPlayerId, player.id);
+
+      // Drop with E
+      const dropInput = createDefaultInput();
+      dropInput.interact = true;
+      engine.handleInput(player.id, dropInput);
+
+      assert.equal(engine.state.rope.state, 'ON_FLOOR');
+      assert.equal(engine.state.rope.heldByPlayerId, null);
+    });
+
+    it('should attach rope to standing player on floor, drag on pull, and release with E', () => {
+      const holder = engine.addHumanPlayer('p_holder', 'Holder')!;
+      const victim = engine.addHumanPlayer('p_victim', 'Victim')!;
+
+      holder.x = 200;
+      holder.y = FLOOR_Y;
+      victim.x = 350;
+      victim.y = FLOOR_Y;
+      victim.state = 'ON_FLOOR';
+
+      engine.state.rope.state = 'HELD';
+      engine.state.rope.heldByPlayerId = holder.id;
+
+      // Throw at victim
+      const aim = Math.atan2(victim.y - holder.y, victim.x - holder.x);
+      const throwInput = createDefaultInput();
+      throwInput.attack = true;
+      throwInput.aimAngle = aim;
+      engine.handleInput(holder.id, throwInput);
+
+      assert.equal(engine.state.rope.state, 'THROWN');
+
+      // Rope reaches victim
+      engine.state.rope.x = victim.x - 5;
+      engine.state.rope.y = victim.y - 15;
+      engine.update();
+
+      assert.equal(engine.state.rope.state, 'ATTACHED');
+      assert.equal(engine.state.rope.attachedPlayerId, victim.id);
+
+      // Pull victim
+      const pullInput = createDefaultInput();
+      pullInput.pull = true;
+      engine.handleInput(holder.id, pullInput);
+
+      assert.equal(engine.state.rope.pulling, true);
+      assert.ok(victim.vx < 0, 'Victim should be dragged leftward toward holder');
+
+      // Release with E
+      const releaseInput = createDefaultInput();
+      releaseInput.interact = true;
+      engine.handleInput(holder.id, releaseInput);
+
+      assert.equal(engine.state.rope.state, 'ON_FLOOR');
+      assert.equal(engine.state.rope.attachedPlayerId, null);
+    });
+
+    it('should enforce tether distance constraint so victim cannot exceed max rope length', () => {
+      const holder = engine.addHumanPlayer('p_holder', 'Holder')!;
+      const victim = engine.addHumanPlayer('p_victim', 'Victim')!;
+
+      holder.x = 200;
+      holder.y = FLOOR_Y;
+      victim.x = 200 + 400; // Beyond 280 max tether distance
+      victim.y = FLOOR_Y;
+
+      engine.state.rope.state = 'ATTACHED';
+      engine.state.rope.heldByPlayerId = holder.id;
+      engine.state.rope.attachedPlayerId = victim.id;
+
+      engine.update();
+
+      const dist = Math.hypot(victim.x - holder.x, victim.y - holder.y);
+      assert.ok(dist <= 281, `Tether constraint failed: distance ${dist} exceeded 280`);
+    });
+
+    it('should drop rope when projectile hits moving security barrier', () => {
+      const thrower = engine.addHumanPlayer('p_thrower', 'Thrower')!;
+      thrower.x = 650;
+      thrower.y = FLOOR_Y;
+
+      const barrier = engine.state.obstacles.find(o => o.type === 'MOVING_BARRIER')!;
+      barrier.y = 520;
+
+      engine.state.rope.state = 'THROWN';
+      engine.state.rope.heldByPlayerId = thrower.id;
+      engine.state.rope.x = barrier.x + 2;
+      engine.state.rope.y = barrier.y + 10;
+
+      engine.update();
+
+      assert.equal(engine.state.rope.state, 'ON_FLOOR', 'Rope hitting barrier must drop to floor');
+    });
   });
 
   // ========================================================
@@ -423,6 +532,122 @@ describe('The Pit - Complete Multiplayer Audit & Unit Tests', () => {
       }
 
       assert.equal(lobbyEngine.state.phase, 'WAITING_SIGNAL', 'Match should transition to WAITING_SIGNAL');
+    });
+  });
+
+  // ========================================================
+  // 8. ENVIRONMENTAL HAZARDS & OBSTACLES
+  // ========================================================
+  describe('Environmental Hazards & Obstacles', () => {
+    it('should land falling player on catwalk platform and drop player when walking off edge', () => {
+      const player = engine.addHumanPlayer('p_catwalk', 'Catwalker')!;
+      const catwalk = engine.state.obstacles.find(o => o.type === 'PLATFORM')!;
+
+      // Position player falling above catwalk
+      player.x = catwalk.x + 30;
+      player.y = catwalk.y - 40;
+      player.vy = 200;
+      player.state = 'FALLING';
+
+      // Simulate physics ticks until landing
+      for (let i = 0; i < 10; i++) {
+        engine.update();
+        if (player.state === 'ON_FLOOR') break;
+      }
+
+      assert.equal(player.state, 'ON_FLOOR', 'Player must land on elevated catwalk');
+      assert.equal(player.y, catwalk.y, 'Player Y must align with catwalk surface');
+      assert.equal(player.isGrounded, true);
+
+      // Walk off right edge of catwalk
+      player.x = catwalk.x + catwalk.width + 25;
+      engine.update();
+
+      assert.equal(player.state, 'FALLING', 'Walking off catwalk edge must trigger falling');
+      assert.equal(player.isGrounded, false);
+    });
+
+    it('should inflict spike damage and knock upward when player steps into spiked floor', () => {
+      const player = engine.addHumanPlayer('p_spiked', 'SpikeVictim')!;
+      const spikes = engine.state.obstacles.find(o => o.type === 'SPIKES')!;
+
+      player.x = spikes.x + 20;
+      player.y = FLOOR_Y;
+      player.state = 'ON_FLOOR';
+      const initialHealth = player.health;
+
+      engine.update();
+
+      assert.ok(player.health < initialHealth, 'Spikes must inflict damage');
+      assert.ok(player.vy < 0, 'Spikes must launch player upward');
+      assert.equal(player.state, 'FALLING');
+    });
+
+    it('should cycle steam vent and damage/launch player upward when ACTIVE', () => {
+      const player = engine.addHumanPlayer('p_steamed', 'SteamVictim')!;
+      const vent = engine.state.obstacles.find(o => o.type === 'STEAM_VENT')!;
+
+      // Force vent into ACTIVE state
+      vent.state = 'ACTIVE';
+      vent.timer = 2.5;
+
+      player.x = vent.x + vent.width / 2;
+      player.y = FLOOR_Y;
+      player.state = 'ON_FLOOR';
+      const initialHealth = player.health;
+
+      engine.update();
+
+      assert.ok(player.health < initialHealth, 'Active steam vent must deal damage');
+      assert.ok(player.vy < 0, 'Active steam vent must blast player upward');
+      assert.equal(player.state, 'FALLING');
+    });
+
+    it('should oscillate moving security barrier and block horizontal movement', () => {
+      const barrier = engine.state.obstacles.find(o => o.type === 'MOVING_BARRIER')!;
+      const initialY = barrier.y;
+
+      // Update engine for multiple ticks to verify oscillation
+      for (let i = 0; i < 30; i++) {
+        engine.update();
+      }
+      assert.notEqual(barrier.y, initialY, 'Security barrier must move/oscillate');
+
+      // Test solid blocking of player moving right towards barrier
+      const runner = engine.addHumanPlayer('p_runner', 'Runner')!;
+      runner.x = barrier.x - 10;
+      runner.y = barrier.y + 20;
+      runner.vx = 200;
+
+      engine.update();
+
+      assert.ok(runner.x <= barrier.x - 15, 'Barrier must physically block player horizontal passage');
+      assert.equal(runner.vx, 0, 'Horizontal velocity must be stopped by barrier');
+    });
+
+    it('should generate ceiling warning, drop falling rock, and damage/stun player on impact', () => {
+      const victim = engine.addHumanPlayer('p_rock_victim', 'RockVictim')!;
+      victim.x = 450;
+      victim.y = FLOOR_Y;
+      victim.state = 'ON_FLOOR';
+      const startHealth = victim.health;
+
+      // Inject a falling rock right above victim
+      engine.state.fallingRocks.push({
+        id: 'test_rock_1',
+        x: victim.x,
+        y: FLOOR_Y - 40,
+        vy: 300,
+        radius: 14,
+        state: 'FALLING',
+        timer: 1.0,
+        active: true
+      });
+
+      engine.update();
+
+      assert.ok(victim.health < startHealth, 'Falling rock impact must inflict damage');
+      assert.ok(victim.stunnedTimer > 0, 'Falling rock impact must stun player');
     });
   });
 });

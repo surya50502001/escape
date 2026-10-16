@@ -1,9 +1,60 @@
 import { 
   GameState, GamePhase, Player, Projectile, SniperShot, SoundEvent, ClientInput, Rope, HatchZone,
+  Obstacle, FallingRock,
   MAX_PLAYERS, CHAMBER_WIDTH, CHAMBER_HEIGHT, FLOOR_Y, V_PIPE_X, V_PIPE_TOP_Y, H_PIPE_Y, H_PIPE_EXIT_X 
 } from './types.js';
 
 export const HATCH_ZONE: HatchZone = { x: 40, y: 40, width: 90, height: 90 };
+
+export const INITIAL_OBSTACLES: Obstacle[] = [
+  // 1. Spiked Floor Section
+  {
+    id: 'spikes_floor',
+    type: 'SPIKES',
+    x: 520,
+    y: FLOOR_Y - 14,
+    width: 100,
+    height: 14,
+    state: 'ACTIVE',
+    timer: 0
+  },
+  // 2. Rusted Elevated Catwalk Platform
+  {
+    id: 'catwalk_platform',
+    type: 'PLATFORM',
+    x: 380,
+    y: 440,
+    width: 160,
+    height: 14,
+    state: 'ACTIVE',
+    timer: 0
+  },
+  // 3. High-Pressure Steam Pipe Vent
+  {
+    id: 'steam_vent',
+    type: 'STEAM_VENT',
+    x: 260,
+    y: FLOOR_Y - 16,
+    width: 36,
+    height: 120,
+    state: 'IDLE',
+    timer: 4.0
+  },
+  // 4. Moving Industrial Security Barrier Grate
+  {
+    id: 'moving_barrier',
+    type: 'MOVING_BARRIER',
+    x: 720,
+    y: 490,
+    width: 18,
+    height: 125,
+    state: 'ACTIVE',
+    timer: 0,
+    minY: 480,
+    maxY: 590,
+    vy: 45
+  }
+];
 
 const TICK_RATE = 30;
 const DT = 1 / TICK_RATE;
@@ -22,6 +73,7 @@ export class GameEngine {
   private signalWindowTimer: number = 0;
   private finalSilenceActive: boolean = false;
   private lobbyTimer: number = 15;
+  private ceilingRockTimer: number = 10;
 
   constructor() {
     this.state = {
@@ -45,9 +97,13 @@ export class GameEngine {
         state: 'ON_FLOOR',
         heldByPlayerId: null,
         attachedPlayerId: null,
-        length: 220
+        length: 220,
+        pulling: false,
+        maxDistance: 280
       },
       players: [],
+      obstacles: INITIAL_OBSTACLES.map(o => ({ ...o })),
+      fallingRocks: [],
       projectiles: [],
       recentShots: [],
       soundEvents: []
@@ -71,6 +127,11 @@ export class GameEngine {
 
     // Reset rope onto concrete floor
     this.dropRope(450, FLOOR_Y);
+
+    // Reset obstacles & hazards
+    this.state.obstacles = INITIAL_OBSTACLES.map(o => ({ ...o }));
+    this.state.fallingRocks = [];
+    this.ceilingRockTimer = 10 + Math.random() * 6;
 
     this.nextSignalTimer = 14 + Math.random() * 8;
     this.state.announcementText = 'ANONYMOUS GUARDS THE UPPER HATCH. SURVIVE 10 MINUTES IN THE CELL.';
@@ -302,21 +363,24 @@ export class GameEngine {
     if (alreadyHoldingRope) {
       if (this.state.rope.state === 'HELD') {
         if (input.attack && p.attackCooldown <= 0) {
-          p.attackCooldown = 1.0;
+          p.attackCooldown = 0.8;
           this.state.rope.state = 'THROWN';
           this.state.rope.x = p.x;
-          this.state.rope.y = p.y - 20;
-          const throwSpeed = 460;
+          this.state.rope.y = p.y - 18;
+          this.state.rope.startX = p.x;
+          this.state.rope.startY = p.y - 18;
+          this.state.rope.maxDistance = 500;
+          const throwSpeed = 520;
           this.state.rope.vx = Math.cos(p.angle) * throwSpeed;
           this.state.rope.vy = Math.sin(p.angle) * throwSpeed;
         }
 
         if (input.interact) {
-          this.dropRope();
+          this.dropRope(p.x, p.y);
         }
       } else if (this.state.rope.state === 'ATTACHED') {
-        // Explicit pull action
-        if (input.tackle || input.attack) {
+        // Explicit pull action: pull key, tackle (Spacebar), or attack (click)
+        if (input.pull || input.tackle || input.attack) {
           this.pullRopeTarget(p);
         } else if (input.interact) {
           // Explicit release of attached victim
@@ -414,13 +478,117 @@ export class GameEngine {
       }
     }
 
-    // Physics updates
+    // Physics & Hazard updates
+    this.updateObstacles();
+    this.updateFallingRocks();
     this.updateRopePhysics();
     this.updateProjectiles();
     this.updatePlayersPhysics();
     this.resolveEscapeAttempts();
 
     this.flushSoundEvents();
+  }
+
+  public updateObstacles(): void {
+    for (const obs of this.state.obstacles) {
+      if (obs.type === 'STEAM_VENT') {
+        obs.timer -= DT;
+        if (obs.state === 'IDLE') {
+          if (obs.timer <= 0) {
+            obs.state = 'WARNING';
+            obs.timer = 1.5;
+            this.emitSound({ type: 'STEAM_HISS', x: obs.x, y: obs.y });
+          }
+        } else if (obs.state === 'WARNING') {
+          if (obs.timer <= 0) {
+            obs.state = 'ACTIVE';
+            obs.timer = 2.5;
+            this.emitSound({ type: 'STEAM_BURST', x: obs.x, y: obs.y });
+          }
+        } else if (obs.state === 'ACTIVE') {
+          // Check collision with players in vertical steam column
+          for (const p of this.state.players) {
+            if (p.state === 'DEAD' || p.hasEscaped) continue;
+            if (p.x >= obs.x - 18 && p.x <= obs.x + obs.width + 18 && p.y >= obs.y - obs.height && p.y <= FLOOR_Y + 10) {
+              this.damagePlayer(p, 25 * DT);
+              p.vy = -260;
+              p.vx = -140;
+              p.isGrounded = false;
+              p.state = 'FALLING';
+              p.stunnedTimer = Math.max(p.stunnedTimer, 0.4);
+            }
+          }
+          if (obs.timer <= 0) {
+            obs.state = 'IDLE';
+            obs.timer = 4.0;
+          }
+        }
+      } else if (obs.type === 'MOVING_BARRIER') {
+        if (obs.vy !== undefined && obs.minY !== undefined && obs.maxY !== undefined) {
+          obs.y += obs.vy * DT;
+          if (obs.y >= obs.maxY) {
+            obs.y = obs.maxY;
+            obs.vy = -Math.abs(obs.vy);
+          } else if (obs.y <= obs.minY) {
+            obs.y = obs.minY;
+            obs.vy = Math.abs(obs.vy);
+          }
+        }
+      }
+    }
+  }
+
+  public updateFallingRocks(): void {
+    if (this.state.phase === 'LOBBY' || this.state.phase === 'MATCH_OVER') return;
+
+    this.ceilingRockTimer -= DT;
+    if (this.ceilingRockTimer <= 0) {
+      this.ceilingRockTimer = 11 + Math.random() * 6;
+      // Spawn a new rock with warning phase at random position along ceiling
+      const rockX = 220 + Math.random() * 620;
+      this.state.fallingRocks.push({
+        id: `rock_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+        x: rockX,
+        y: 85,
+        vy: 0,
+        warningTimer: 1.2,
+        active: true
+      });
+    }
+
+    for (const rock of this.state.fallingRocks) {
+      if (!rock.active) continue;
+
+      if (rock.warningTimer > 0) {
+        rock.warningTimer -= DT;
+      } else {
+        rock.vy += 620 * DT;
+        rock.y += rock.vy * DT;
+
+        // Player collision
+        for (const p of this.state.players) {
+          if (p.state === 'DEAD' || p.hasEscaped) continue;
+          const dist = Math.hypot(p.x - rock.x, (p.y - 15) - rock.y);
+          if (dist < 30) {
+            this.damagePlayer(p, 25);
+            p.stunnedTimer = 1.2;
+            p.state = 'FALLING';
+            p.vy = 220;
+            rock.active = false;
+            this.emitSound({ type: 'ROCK_HIT', x: p.x, y: p.y });
+            break;
+          }
+        }
+
+        // Floor impact
+        if (rock.y >= FLOOR_Y - 8) {
+          rock.active = false;
+          this.emitSound({ type: 'ROCK_FALL', x: rock.x, y: FLOOR_Y });
+        }
+      }
+    }
+
+    this.state.fallingRocks = this.state.fallingRocks.filter(r => r.active);
   }
 
   private flushSoundEvents(): void {
@@ -546,6 +714,7 @@ export class GameEngine {
 
   private updateRopePhysics(): void {
     const rope = this.state.rope;
+    rope.pulling = false;
 
     if (rope.state === 'HELD') {
       const holder = this.state.players.find(p => p.id === rope.heldByPlayerId);
@@ -558,25 +727,42 @@ export class GameEngine {
     } else if (rope.state === 'THROWN') {
       rope.x += rope.vx * DT;
       rope.y += rope.vy * DT;
-      rope.vy += 320 * DT; // Slight gravity on thrown rope
+      rope.vy += 280 * DT; // Slight gravity on thrown rope
 
-      // Check collision with hanging / climbing players
-      for (const p of this.state.players) {
-        if (p.id === rope.heldByPlayerId || p.state === 'DEAD' || p.hasEscaped) continue;
-        const dist = Math.hypot(p.x - rope.x, p.y - rope.y);
-        if (dist < 35 && (p.state === 'CLIMBING_V_PIPE' || p.state === 'HANGING_H_PIPE' || p.state === 'FALLING')) {
-          rope.state = 'ATTACHED';
-          rope.attachedPlayerId = p.id;
-          rope.x = p.x;
-          rope.y = p.y;
-          this.emitSound({ type: 'ROPE_ATTACH', x: p.x, y: p.y });
-          break;
+      // Check max travel range
+      if (rope.startX !== undefined && rope.startY !== undefined) {
+        const traveled = Math.hypot(rope.x - rope.startX, rope.y - rope.startY);
+        if (traveled > (rope.maxDistance || 500)) {
+          this.dropRope(rope.x, FLOOR_Y);
+          return;
         }
       }
 
-      // Hit wall or floor without catching anyone
-      if (rope.y >= FLOOR_Y || rope.x < 30 || rope.x > CHAMBER_WIDTH - 30) {
+      // Chamber walls / floor collision
+      if (rope.y >= FLOOR_Y || rope.x < 30 || rope.x > CHAMBER_WIDTH - 30 || rope.y < 30) {
+        this.dropRope(Math.max(40, Math.min(CHAMBER_WIDTH - 40, rope.x)), FLOOR_Y);
+        return;
+      }
+
+      // Check collision with solid moving barrier
+      const barrier = this.state.obstacles.find(o => o.type === 'MOVING_BARRIER');
+      if (barrier && rope.x >= barrier.x && rope.x <= barrier.x + barrier.width && rope.y >= barrier.y && rope.y <= barrier.y + barrier.height) {
         this.dropRope(rope.x, FLOOR_Y);
+        return;
+      }
+
+      // Check collision with ALL other living players (standing, climbing, hanging, falling)
+      for (const p of this.state.players) {
+        if (p.id === rope.heldByPlayerId || p.state === 'DEAD' || p.hasEscaped) continue;
+        const dist = Math.hypot(p.x - rope.x, (p.y - 15) - rope.y);
+        if (dist < 36) {
+          rope.state = 'ATTACHED';
+          rope.attachedPlayerId = p.id;
+          rope.x = p.x;
+          rope.y = p.y - 15;
+          this.emitSound({ type: 'ROPE_ATTACH', x: p.x, y: p.y });
+          break;
+        }
       }
     } else if (rope.state === 'ATTACHED') {
       const holder = this.state.players.find(p => p.id === rope.heldByPlayerId);
@@ -585,30 +771,58 @@ export class GameEngine {
       if (!holder || !target || holder.state === 'DEAD' || target.state === 'DEAD' || target.hasEscaped) {
         this.dropRope();
       } else {
-        rope.x = target.x;
-        rope.y = target.y;
-        // Notice: NO auto-pulling. Pulling is only triggered by explicit player input.
+        rope.x = holder.x;
+        rope.y = holder.y - 15;
+
+        // Tether constraint: prevent victim from running further than max rope length
+        const dx = target.x - holder.x;
+        const dy = target.y - holder.y;
+        const dist = Math.hypot(dx, dy);
+        const maxDist = rope.maxDistance || 280;
+        if (dist > maxDist) {
+          const excess = dist - maxDist;
+          const nx = dx / dist;
+          const ny = dy / dist;
+          target.x -= nx * excess;
+          target.y -= ny * excess;
+          target.vx *= 0.3;
+        }
       }
     }
   }
 
-  private pullRopeTarget(holder: Player): void {
+  public pullRopeTarget(holder: Player): void {
     const rope = this.state.rope;
     const target = this.state.players.find(p => p.id === rope.attachedPlayerId);
     if (!target) return;
 
-    // Pull victim off pipe violently down toward floor
-    target.state = 'FALLING';
-    target.stunnedTimer = 1.8;
-    target.vy = 420; // Jerk downward
-    target.vx = (holder.x - target.x) * 0.4;
+    rope.pulling = true;
+    const dx = holder.x - target.x;
+    const dy = (holder.y - 15) - target.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const nx = dx / dist;
+    const ny = dy / dist;
 
-    this.damagePlayer(target, 20, holder);
-    this.emitSound({ type: 'ROPE_PULL', x: target.x, y: target.y });
-    this.emitSound({ type: 'FALL_IMPACT', x: target.x, y: target.y });
-
-    // Release rope back to floor at victim's landing spot
-    this.dropRope(target.x, FLOOR_Y);
+    // Pull victim toward holder
+    if (target.state === 'CLIMBING_V_PIPE' || target.state === 'HANGING_H_PIPE') {
+      // Violent yank off pipe into falling freefall!
+      target.state = 'FALLING';
+      target.isGrounded = false;
+      target.stunnedTimer = 1.0;
+      target.vx = nx * 380;
+      target.vy = Math.min(360, ny * 320 + 200);
+      this.damagePlayer(target, 15, holder);
+      this.emitSound({ type: 'ROPE_PULL', x: target.x, y: target.y });
+      this.emitSound({ type: 'FALL_IMPACT', x: target.x, y: target.y });
+      this.dropRope();
+    } else {
+      // On floor / falling: drag victim toward holder
+      target.vx = nx * 340;
+      target.vy = ny * 180 - 60;
+      target.stunnedTimer = 0.4;
+      this.damagePlayer(target, 8, holder);
+      this.emitSound({ type: 'ROPE_PULL', x: target.x, y: target.y });
+    }
   }
 
   public dropRope(x?: number, y?: number): void {
@@ -616,6 +830,7 @@ export class GameEngine {
     rope.state = 'ON_FLOOR';
     rope.heldByPlayerId = null;
     rope.attachedPlayerId = null;
+    rope.pulling = false;
     rope.vx = 0;
     rope.vy = 0;
     rope.y = y !== undefined ? y : FLOOR_Y;
@@ -657,6 +872,10 @@ export class GameEngine {
   }
 
   private updatePlayersPhysics(): void {
+    const catwalk = this.state.obstacles.find(o => o.type === 'PLATFORM');
+    const barrier = this.state.obstacles.find(o => o.type === 'MOVING_BARRIER');
+    const spikes = this.state.obstacles.find(o => o.type === 'SPIKES');
+
     for (const p of this.state.players) {
       if (p.state === 'DEAD' || p.hasEscaped) continue;
 
@@ -677,7 +896,19 @@ export class GameEngine {
         p.x += p.vx * DT;
         p.y += p.vy * DT;
 
-        // Ground collision
+        // Catwalk Platform Collision (landing on top surface)
+        if (catwalk && p.vy > 0) {
+          if (p.y >= catwalk.y - 8 && p.y <= catwalk.y + 16 && p.x >= catwalk.x - 10 && p.x <= catwalk.x + catwalk.width + 10) {
+            p.y = catwalk.y;
+            p.vy = 0;
+            p.vx = 0;
+            p.isGrounded = true;
+            p.state = p.stunnedTimer > 0 ? 'STUNNED' : 'ON_FLOOR';
+            this.emitSound({ type: 'FALL_IMPACT', x: p.x, y: p.y });
+          }
+        }
+
+        // Concrete Floor Collision
         if (p.y >= FLOOR_Y) {
           p.y = FLOOR_Y;
           p.vy = 0;
@@ -688,13 +919,46 @@ export class GameEngine {
         }
       } else if (p.state === 'ON_FLOOR') {
         p.x += p.vx * DT;
-        p.y = FLOOR_Y;
+
+        // Check if player walked off elevated catwalk
+        if (catwalk && Math.abs(p.y - catwalk.y) < 5) {
+          if (p.x < catwalk.x - 10 || p.x > catwalk.x + catwalk.width + 10) {
+            p.isGrounded = false;
+            p.state = 'FALLING';
+          }
+        } else {
+          p.y = FLOOR_Y;
+        }
+
+        // Spiked floor hazard check
+        if (spikes && p.y >= FLOOR_Y - 2) {
+          if (p.x >= spikes.x - 5 && p.x <= spikes.x + spikes.width + 5) {
+            this.damagePlayer(p, 20 * DT);
+            p.vy = -140;
+            p.isGrounded = false;
+            p.state = 'FALLING';
+            this.emitSound({ type: 'SPIKE_HIT', x: p.x, y: p.y });
+          }
+        }
       } else if (p.state === 'CLIMBING_V_PIPE') {
         p.y += p.vy * DT;
         p.x = V_PIPE_X;
       } else if (p.state === 'HANGING_H_PIPE') {
         p.x += p.vx * DT;
         p.y = H_PIPE_Y + 15;
+      }
+
+      // Moving Barrier Solid Obstacle Collision (prevent crossing through moving gate)
+      if (barrier && p.y >= barrier.y - 10 && p.y <= barrier.y + barrier.height + 10) {
+        if (Math.abs(p.x - barrier.x) < 18) {
+          if (p.vx > 0) {
+            p.x = barrier.x - 18;
+            p.vx = 0;
+          } else if (p.vx < 0) {
+            p.x = barrier.x + barrier.width + 18;
+            p.vx = 0;
+          }
+        }
       }
 
       // Chamber side bounds

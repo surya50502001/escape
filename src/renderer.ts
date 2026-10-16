@@ -1,4 +1,4 @@
-import { GameState, Player, Projectile, SniperShot, Rope, HatchZone, FLOOR_Y, V_PIPE_X, V_PIPE_TOP_Y, H_PIPE_Y, H_PIPE_EXIT_X } from '../server/types.js';
+import { GameState, Player, Projectile, SniperShot, Rope, HatchZone, Obstacle, FallingRock, FLOOR_Y, V_PIPE_X, V_PIPE_TOP_Y, H_PIPE_Y, H_PIPE_EXIT_X } from '../server/types.js';
 
 interface Particle {
   x: number;
@@ -61,11 +61,21 @@ export class GameRenderer {
     // 3. Draw Escape Hatch & Overseer at Upper-Left
     this.drawUpperLeftHatchAndOverseer(ctx, state);
 
-    // 4. Draw Particles (impact dust, blood, sparks)
+    // 4. Draw Environmental Obstacles (Catwalk Platform, Spikes, Steam Vent, Moving Barrier)
+    if (state.obstacles) {
+      this.drawObstacles(ctx, state.obstacles);
+    }
+
+    // 5. Draw Falling Rocks & Warning Hazards
+    if (state.fallingRocks) {
+      this.drawFallingRocks(ctx, state.fallingRocks);
+    }
+
+    // 6. Draw Particles (impact dust, blood, sparks)
     this.updateAndDrawParticles(ctx, dt);
 
-    // 5. Draw The Single Rope (on floor, thrown, or attached)
-    this.drawRope(ctx, state.rope, state.players);
+    // 7. Draw The Single Rope (on floor, thrown, or attached, plus aiming indicator)
+    this.drawRope(ctx, state.rope, state.players, localPlayerId);
 
     // 6. Draw Thrown Rocks
     this.drawProjectiles(ctx, state.projectiles);
@@ -324,10 +334,310 @@ export class GameRenderer {
   }
 
   // ==========================================
-  // 4. THE ROPE (ON FLOOR / CARRIED / ATTACHED)
+  // 4. ENVIRONMENTAL OBSTACLES (CATWALK, SPIKES, STEAM, BARRIER)
   // ==========================================
-  private drawRope(ctx: CanvasRenderingContext2D, rope: Rope, players: Player[]): void {
+  private drawObstacles(ctx: CanvasRenderingContext2D, obstacles: Obstacle[]): void {
+    const time = performance.now() / 1000;
+
+    for (const obs of obstacles) {
+      ctx.save();
+
+      if (obs.type === 'PLATFORM' || (obs.type as string) === 'CATWALK_PLATFORM') {
+        // Heavy Industrial Steel Platform
+        // Platform Deck
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+
+        // Top Grate Surface (Metallic highlight)
+        ctx.fillStyle = '#475569';
+        ctx.fillRect(obs.x, obs.y, obs.width, 3);
+
+        // Grated diamond tread pattern
+        ctx.strokeStyle = '#334155';
+        ctx.lineWidth = 1;
+        for (let gx = obs.x + 8; gx < obs.x + obs.width; gx += 12) {
+          ctx.beginPath();
+          ctx.moveTo(gx, obs.y + 3);
+          ctx.lineTo(gx - 6, obs.y + obs.height - 1);
+          ctx.stroke();
+        }
+
+        // Support Brackets below platform
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(obs.x + 8, obs.y + obs.height, 10, 16);
+        ctx.fillRect(obs.x + obs.width - 18, obs.y + obs.height, 10, 16);
+
+        // Diagonal Support Beams anchored downward
+        ctx.strokeStyle = '#334155';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(obs.x + 13, obs.y + obs.height + 16);
+        ctx.lineTo(obs.x + 35, obs.y + obs.height + 40);
+        ctx.moveTo(obs.x + obs.width - 13, obs.y + obs.height + 16);
+        ctx.lineTo(obs.x + obs.width - 35, obs.y + obs.height + 40);
+        ctx.stroke();
+
+        // Edge rivets
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillRect(obs.x + 4, obs.y + 4, 3, 3);
+        ctx.fillRect(obs.x + obs.width - 7, obs.y + 4, 3, 3);
+
+      } else if (obs.type === 'SPIKES' || (obs.type as string) === 'SPIKE_HAZARD') {
+        // Jagged Metallic Spikes on Floor
+        const spikeCount = Math.floor(obs.width / 14);
+        const spikeW = obs.width / spikeCount;
+
+        // Base mounting bar
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(obs.x, obs.y + obs.height - 4, obs.width, 4);
+
+        for (let i = 0; i < spikeCount; i++) {
+          const sx = obs.x + i * spikeW;
+          const sy = obs.y + obs.height;
+          const tipX = sx + spikeW / 2;
+          const tipY = obs.y;
+
+          // Spike shadow / base
+          ctx.fillStyle = '#334155';
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(tipX, tipY);
+          ctx.lineTo(sx + spikeW, sy);
+          ctx.closePath();
+          ctx.fill();
+
+          // Highlight edge on spike tip
+          ctx.strokeStyle = '#94a3b8';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(tipX, tipY);
+          ctx.stroke();
+
+          // Blood / gore stains on tips
+          ctx.fillStyle = '#7f1d1d';
+          ctx.beginPath();
+          ctx.moveTo(tipX - 2, tipY + 6);
+          ctx.lineTo(tipX, tipY);
+          ctx.lineTo(tipX + 2, tipY + 6);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        // Warning Hazard Sign
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.4)';
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('⚠ LETHAL SPIKES ⚠', obs.x + obs.width / 2, obs.y - 6);
+
+      } else if (obs.type === 'STEAM_VENT') {
+        // Steam Vent Base Housing
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(obs.x - 4, obs.y + obs.height - 8, obs.width + 8, 8);
+        ctx.fillStyle = '#475569';
+        ctx.fillRect(obs.x, obs.y + obs.height - 14, obs.width, 6);
+
+        // Vent slots
+        ctx.fillStyle = '#090d16';
+        for (let vx = obs.x + 4; vx < obs.x + obs.width - 4; vx += 7) {
+          ctx.fillRect(vx, obs.y + obs.height - 12, 3, 5);
+        }
+
+        if (obs.state === 'WARNING') {
+          // Warning state: glowing heat indicator & amber wisps
+          const pulse = (Math.sin(time * 12) + 1) / 2;
+          ctx.fillStyle = `rgba(234, 179, 8, ${0.4 + pulse * 0.4})`;
+          ctx.fillRect(obs.x + 2, obs.y + obs.height - 16, obs.width - 4, 3);
+
+          // Subtle hiss vapor
+          ctx.fillStyle = `rgba(254, 240, 138, ${0.25 + pulse * 0.35})`;
+          ctx.beginPath();
+          ctx.arc(obs.x + obs.width / 2 + Math.sin(time * 8) * 6, obs.y + obs.height - 24, 8, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = '#fde047';
+          ctx.font = 'bold 9px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('⚡ STEAM CHARGING', obs.x + obs.width / 2, obs.y - 10);
+
+        } else if (obs.state === 'ACTIVE') {
+          // ACTIVE: Violent High-Pressure Steam Jet blasting upwards
+          const plumeHeight = 145;
+          const jetGrad = ctx.createLinearGradient(0, obs.y + obs.height, 0, obs.y + obs.height - plumeHeight);
+          jetGrad.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+          jetGrad.addColorStop(0.3, 'rgba(226, 232, 240, 0.75)');
+          jetGrad.addColorStop(0.7, 'rgba(203, 213, 225, 0.4)');
+          jetGrad.addColorStop(1, 'rgba(148, 163, 184, 0)');
+
+          ctx.fillStyle = jetGrad;
+          ctx.beginPath();
+          ctx.moveTo(obs.x + 2, obs.y + obs.height - 14);
+          ctx.lineTo(obs.x - 14, obs.y + obs.height - plumeHeight);
+          ctx.lineTo(obs.x + obs.width + 14, obs.y + obs.height - plumeHeight);
+          ctx.lineTo(obs.x + obs.width - 2, obs.y + obs.height - 14);
+          ctx.closePath();
+          ctx.fill();
+
+          // Steam turbulence billows
+          for (let b = 0; b < 4; b++) {
+            const by = obs.y + obs.height - 30 - b * 30;
+            const bx = obs.x + obs.width / 2 + Math.sin(time * 15 + b) * 12;
+            const radius = 12 + b * 6;
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+            ctx.beginPath();
+            ctx.arc(bx, by, radius, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          ctx.fillStyle = '#ef4444';
+          ctx.font = 'bold 10px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('♨ DANGER: SCALDING STEAM ♨', obs.x + obs.width / 2, obs.y + obs.height - plumeHeight - 8);
+        }
+
+      } else if (obs.type === 'MOVING_BARRIER') {
+        // Heavy Hydraulic Security Sluice Gate
+        // Top Hydraulic Cylinder
+        ctx.fillStyle = '#334155';
+        ctx.fillRect(obs.x + obs.width / 2 - 4, 0, 8, obs.y);
+        ctx.fillStyle = '#64748b';
+        ctx.fillRect(obs.x + obs.width / 2 - 2, obs.y - 12, 4, 12);
+
+        // Barrier Body
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+
+        // Yellow and Black Diagonal Hazard Stripes
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(obs.x, obs.y, obs.width, obs.height);
+        ctx.clip();
+
+        ctx.fillStyle = '#eab308';
+        ctx.lineWidth = 6;
+        for (let sx = -obs.height; sx < obs.width + obs.height; sx += 14) {
+          ctx.beginPath();
+          ctx.moveTo(obs.x + sx, obs.y);
+          ctx.lineTo(obs.x + sx + 8, obs.y);
+          ctx.lineTo(obs.x + sx + 8 + obs.height, obs.y + obs.height);
+          ctx.lineTo(obs.x + sx + obs.height, obs.y + obs.height);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.restore();
+
+        // Metallic reinforced frame
+        ctx.strokeStyle = '#475569';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(obs.x, obs.y, obs.width, obs.height);
+
+        // Status Beacon Light on top
+        const beaconP = (Math.sin(time * 8) + 1) / 2;
+        ctx.fillStyle = `rgba(239, 68, 68, ${0.6 + beaconP * 0.4})`;
+        ctx.beginPath();
+        ctx.arc(obs.x + obs.width / 2, obs.y + 6, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.restore();
+    }
+  }
+
+  // ==========================================
+  // 5. FALLING CEILING ROCKS & DANGER CRACKS
+  // ==========================================
+  private drawFallingRocks(ctx: CanvasRenderingContext2D, fallingRocks: FallingRock[]): void {
+    const time = performance.now() / 1000;
+
+    for (const rock of fallingRocks) {
+      ctx.save();
+      const rockRadius = rock.radius || 14;
+      const isWarning = rock.warningTimer !== undefined ? rock.warningTimer > 0 : (rock as unknown as { state?: string }).state === 'WARNING';
+
+      if (isWarning) {
+        // Ceiling fracture cracks at rock.x
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(rock.x, 0);
+        ctx.lineTo(rock.x - 6, 8);
+        ctx.lineTo(rock.x + 4, 16);
+        ctx.lineTo(rock.x - 2, 24);
+        ctx.moveTo(rock.x, 0);
+        ctx.lineTo(rock.x + 8, 10);
+        ctx.lineTo(rock.x + 14, 20);
+        ctx.stroke();
+
+        // Warning crumb dust tumbling
+        ctx.fillStyle = '#64748b';
+        const dustY = ((time * 120) % 70);
+        ctx.fillRect(rock.x - 2 + Math.sin(time * 10) * 4, dustY, 2, 2);
+        ctx.fillRect(rock.x + 3 + Math.cos(time * 10) * 4, (dustY + 25) % 70, 2, 2);
+
+        // Floor warning targeting indicator shadow
+        const shadowP = 0.3 + (Math.sin(time * 14) + 1) * 0.2;
+        ctx.fillStyle = `rgba(239, 68, 68, ${shadowP})`;
+        ctx.beginPath();
+        ctx.ellipse(rock.x, FLOOR_Y - 2, rockRadius * 1.2, 5, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#f87171';
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('▲ CRUMBLING CEILING ▲', rock.x, 38);
+
+      } else {
+        // Falling boulder
+        // Motion speed blur lines
+        ctx.strokeStyle = 'rgba(148, 163, 184, 0.4)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(rock.x - 4, rock.y - rockRadius - 12);
+        ctx.lineTo(rock.x - 4, rock.y - rockRadius);
+        ctx.moveTo(rock.x + 4, rock.y - rockRadius - 18);
+        ctx.lineTo(rock.x + 4, rock.y - rockRadius);
+        ctx.stroke();
+
+        // Rough jagged polygonal boulder
+        ctx.fillStyle = '#334155';
+        ctx.beginPath();
+        const pts = 7;
+        for (let i = 0; i < pts; i++) {
+          const angle = (i / pts) * Math.PI * 2;
+          const r = rockRadius * (0.85 + (i % 3) * 0.15);
+          const px = rock.x + Math.cos(angle) * r;
+          const py = rock.y + Math.sin(angle) * r;
+          if (i === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+
+        // Edge contour and highlights
+        ctx.strokeStyle = '#64748b';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Surface fissure
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(rock.x - 4, rock.y - 4);
+        ctx.lineTo(rock.x + 2, rock.y + 2);
+        ctx.lineTo(rock.x + 5, rock.y - 3);
+        ctx.stroke();
+      }
+
+      ctx.restore();
+    }
+  }
+
+  // ==========================================
+  // 6. THE ROPE (ON FLOOR / CARRIED / ATTACHED / THROWN)
+  // ==========================================
+  private drawRope(ctx: CanvasRenderingContext2D, rope: Rope, players: Player[], localPlayerId: string): void {
     ctx.save();
+    const time = performance.now() / 1000;
 
     if (rope.state === 'ON_FLOOR') {
       // Coiled hemp rope resting on dirty concrete floor
@@ -351,11 +661,13 @@ export class GameRenderer {
       ctx.quadraticCurveTo(rope.x + 22, FLOOR_Y - 12, rope.x + 30, FLOOR_Y - 2);
       ctx.stroke();
 
-      // Action hint prompt
-      ctx.fillStyle = '#fde047';
+      // Action hint prompt with pulsing glow
+      const promptAlpha = 0.75 + Math.sin(time * 6) * 0.25;
+      ctx.fillStyle = `rgba(253, 224, 71, ${promptAlpha})`;
       ctx.font = 'bold 11px monospace';
       ctx.textAlign = 'center';
-      ctx.fillText('[E] GRAB ROPE', rope.x, FLOOR_Y - 22);
+      ctx.fillText('[E] PICK UP ROPE', rope.x, FLOOR_Y - 22);
+
     } else if (rope.state === 'HELD') {
       const holder = players.find(p => p.id === rope.heldByPlayerId);
       if (holder) {
@@ -363,15 +675,47 @@ export class GameRenderer {
         ctx.strokeStyle = '#d97706';
         ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.moveTo(holder.x + (holder.facing === 'RIGHT' ? 10 : -10), holder.y - 18);
+        const handX = holder.x + (holder.facing === 'RIGHT' ? 10 : -10);
+        const handY = holder.y - 18;
+        ctx.moveTo(handX, handY);
         ctx.lineTo(holder.x, holder.y - 6);
         ctx.stroke();
 
-        ctx.fillStyle = '#fde047';
-        ctx.font = 'bold 10px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText('HOLDING ROPE [CLICK TO THROW]', holder.x, holder.y - 42);
+        if (holder.id === localPlayerId) {
+          // Draw aiming trajectory dotted line for local player
+          const aimLen = rope.maxDistance || 280;
+          const endAimX = handX + Math.cos(holder.angle) * aimLen;
+          const endAimY = handY + Math.sin(holder.angle) * aimLen;
+
+          ctx.strokeStyle = 'rgba(251, 191, 36, 0.6)';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(handX, handY);
+          ctx.lineTo(endAimX, endAimY);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Aim crosshair circle
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(endAimX, endAimY, 5, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Overhead HUD hint for local player
+          ctx.fillStyle = '#fde047';
+          ctx.font = 'bold 10px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('AIM: MOUSE | CLICK: THROW | [E] DROP', holder.x, holder.y - 44);
+        } else {
+          ctx.fillStyle = '#fde047';
+          ctx.font = 'bold 10px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('HOLDING ROPE', holder.x, holder.y - 44);
+        }
       }
+
     } else if (rope.state === 'THROWN') {
       // Flying rope projectile with lasso loop
       ctx.strokeStyle = '#d97706';
@@ -380,40 +724,74 @@ export class GameRenderer {
       ctx.arc(rope.x, rope.y, 8, 0, Math.PI * 2);
       ctx.stroke();
 
-      // Trailing rope segments
+      // Trailing dynamic rope segments connecting throw origin / holder
       const holder = players.find(p => p.id === rope.heldByPlayerId);
-      if (holder) {
-        ctx.strokeStyle = 'rgba(217, 119, 6, 0.7)';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(holder.x, holder.y - 18);
-        ctx.quadraticCurveTo((holder.x + rope.x) / 2, Math.max(holder.y, rope.y) + 30, rope.x, rope.y);
-        ctx.stroke();
-      }
+      const startX = rope.startX ?? (holder ? holder.x : rope.x);
+      const startY = rope.startY ?? (holder ? holder.y - 18 : rope.y);
+
+      ctx.strokeStyle = 'rgba(217, 119, 6, 0.85)';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      // Slight droop curve
+      const midX = (startX + rope.x) / 2;
+      const midY = (startY + rope.y) / 2 + 18;
+      ctx.quadraticCurveTo(midX, midY, rope.x, rope.y);
+      ctx.stroke();
+
     } else if (rope.state === 'ATTACHED') {
       const holder = players.find(p => p.id === rope.heldByPlayerId);
       const target = players.find(p => p.id === rope.attachedPlayerId);
 
       if (holder && target) {
-        // Taut rope connecting holder on ground to victim hanging/climbing
-        ctx.strokeStyle = '#f59e0b';
-        ctx.lineWidth = 3.5;
-        ctx.beginPath();
-        ctx.moveTo(holder.x, holder.y - 18);
-        ctx.lineTo(target.x, target.y);
-        ctx.stroke();
+        const isPulling = Boolean(rope.pulling);
+        const holderHandX = holder.x + (holder.facing === 'RIGHT' ? 10 : -10);
+        const holderHandY = holder.y - 18;
 
-        // Lasso loop wrapped around target's waist/legs
-        ctx.strokeStyle = '#b45309';
+        if (isPulling) {
+          // Dynamic tense cable with electrical/strain vibration
+          const jitter = (Math.sin(time * 30) * 3);
+          ctx.strokeStyle = '#f97316';
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.moveTo(holderHandX, holderHandY);
+          const midX = (holderHandX + target.x) / 2 + jitter;
+          const midY = (holderHandY + target.y) / 2 - jitter;
+          ctx.lineTo(midX, midY);
+          ctx.lineTo(target.x, target.y);
+          ctx.stroke();
+        } else {
+          // Taut rope connecting holder to victim
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = 3.5;
+          ctx.beginPath();
+          ctx.moveTo(holderHandX, holderHandY);
+          ctx.lineTo(target.x, target.y);
+          ctx.stroke();
+        }
+
+        // Lasso loop wrapped around target's torso/legs
+        ctx.strokeStyle = isPulling ? '#ef4444' : '#b45309';
         ctx.lineWidth = 4;
         ctx.beginPath();
-        ctx.ellipse(target.x, target.y, 10, 6, 0, 0, Math.PI * 2);
+        ctx.ellipse(target.x, target.y - 8, 12, 7, 0, 0, Math.PI * 2);
         ctx.stroke();
 
-        ctx.fillStyle = '#ef4444';
-        ctx.font = 'bold 11px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText('⚡ ROPE ATTACHED! [SPACE TO YANK OFF PIPE]', holder.x, holder.y - 42);
+        // Contextual action prompt for holder
+        if (holder.id === localPlayerId) {
+          ctx.fillStyle = isPulling ? '#f97316' : '#fde047';
+          ctx.font = 'bold 11px monospace';
+          ctx.textAlign = 'center';
+          const actionText = isPulling
+            ? '⚡ DRAGGING VICTIM! [E: RELEASE]'
+            : '⚡ VICTIM HOOKED! [HOLD SPACE/CLICK: DRAG | E: RELEASE]';
+          ctx.fillText(actionText, holder.x, holder.y - 44);
+        } else if (target.id === localPlayerId) {
+          ctx.fillStyle = '#ef4444';
+          ctx.font = 'bold 11px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('⚠ ENSNARED IN ROPE! ⚠', target.x, target.y - 48);
+        }
       }
     }
 

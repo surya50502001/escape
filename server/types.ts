@@ -36,6 +36,38 @@ export interface Rope {
   heldByPlayerId: string | null;
   attachedPlayerId: string | null;
   length: number;
+  pulling?: boolean;
+  startX?: number;
+  startY?: number;
+  maxDistance?: number;
+}
+
+export type ObstacleType = 'SPIKES' | 'PLATFORM' | 'STEAM_VENT' | 'MOVING_BARRIER';
+export type ObstacleState = 'IDLE' | 'WARNING' | 'ACTIVE';
+
+export interface Obstacle {
+  id: string;
+  type: ObstacleType;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  state: ObstacleState;
+  timer: number;
+  minY?: number;
+  maxY?: number;
+  vy?: number;
+}
+
+export interface FallingRock {
+  id: string;
+  x: number;
+  y: number;
+  vy: number;
+  warningTimer: number; // >0 means warning cracks at ceiling; <= 0 means actively falling
+  active: boolean;
+  radius?: number;
+  state?: 'WARNING' | 'FALLING';
 }
 
 export interface Projectile {
@@ -61,7 +93,7 @@ export interface SniperShot {
 }
 
 export interface SoundEvent {
-  type: 'ANNOUNCEMENT' | 'CLANG' | 'GUNSHOT' | 'TACKLE' | 'ROCK_HIT' | 'ROPE_ATTACH' | 'ROPE_PULL' | 'FALL_IMPACT' | 'ESCAPE' | 'CRASH';
+  type: 'ANNOUNCEMENT' | 'CLANG' | 'GUNSHOT' | 'TACKLE' | 'ROCK_HIT' | 'ROPE_ATTACH' | 'ROPE_PULL' | 'FALL_IMPACT' | 'ESCAPE' | 'CRASH' | 'STEAM_HISS' | 'STEAM_BURST' | 'ROCK_FALL' | 'SPIKE_HIT';
   x?: number;
   y?: number;
 }
@@ -96,6 +128,8 @@ export interface GameState {
   hatch: HatchZone;
   rope: Rope;
   players: Player[];
+  obstacles: Obstacle[];
+  fallingRocks: FallingRock[];
   projectiles: Projectile[];
   recentShots: SniperShot[];
   soundEvents: SoundEvent[];
@@ -107,9 +141,10 @@ export interface ClientInput {
   up: boolean;
   down: boolean;
   jump: boolean;
-  interact: boolean; // 'E' to pick up/drop rope
+  interact: boolean; // 'E' to pick up/drop/release rope
   attack: boolean;   // Throw rock or rope
   tackle: boolean;   // Spacebar: tackle or yank rope
+  pull?: boolean;    // Pull attached victim
   aimAngle: number;
 }
 

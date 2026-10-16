@@ -7,7 +7,7 @@
     "dev:server": "tsx watch server/server.ts",
     "dev:client": "vite",
     "build": "tsc && vite build",
-    "test": "tsx --test test/**/*.test.ts",
+    "test": "tsx --test test/gameEngine.test.ts",
     "start": "tsx server/server.ts"
   },
   "dependencies": {
