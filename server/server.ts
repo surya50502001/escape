@@ -91,6 +91,9 @@ export function sanitizeInput(raw: unknown): ClientInput | null {
     attack: strictBool(obj.attack),
     tackle: strictBool(obj.tackle),
     pull: strictBool(obj.pull),
+    climbKick: strictBool(obj.climbKick),
+    climbGrab: strictBool(obj.climbGrab),
+    struggle: strictBool(obj.struggle),
     aimAngle
   };
 }

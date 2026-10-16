@@ -20,6 +20,8 @@ export class InputManager {
   private tackleRequested: boolean = false;
   private interactRequested: boolean = false;
   private jumpRequested: boolean = false;
+  private struggleRequested: boolean = false;
+  private isSpaceDown: boolean = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -34,6 +36,7 @@ export class InputManager {
       if (code === 'KeyW' || code === 'ArrowUp') {
         this.input.up = true;
         this.jumpRequested = true;
+        this.struggleRequested = true;
       }
       if (code === 'KeyS' || code === 'ArrowDown') this.input.down = true;
 
@@ -43,7 +46,14 @@ export class InputManager {
 
       if (code === 'Space') {
         e.preventDefault();
+        this.isSpaceDown = true;
         this.tackleRequested = true;
+        this.struggleRequested = true;
+      }
+
+      if (code === 'KeyF') {
+        this.tackleRequested = true;
+        this.struggleRequested = true;
       }
     });
 
@@ -53,6 +63,7 @@ export class InputManager {
       if (code === 'KeyD' || code === 'ArrowRight') this.input.right = false;
       if (code === 'KeyW' || code === 'ArrowUp') this.input.up = false;
       if (code === 'KeyS' || code === 'ArrowDown') this.input.down = false;
+      if (code === 'Space') this.isSpaceDown = false;
     });
 
     window.addEventListener('mousemove', (e) => {
@@ -82,6 +93,9 @@ export class InputManager {
       attack: this.attackRequested,
       tackle: this.tackleRequested,
       pull: this.attackRequested || this.tackleRequested,
+      climbKick: this.tackleRequested,
+      climbGrab: this.isSpaceDown,
+      struggle: this.struggleRequested,
       interact: this.interactRequested,
       jump: this.jumpRequested
     };
@@ -90,6 +104,7 @@ export class InputManager {
     this.tackleRequested = false;
     this.interactRequested = false;
     this.jumpRequested = false;
+    this.struggleRequested = false;
 
     return payload;
   }

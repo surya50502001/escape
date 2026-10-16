@@ -207,11 +207,77 @@ class SoundEngine {
     gain.gain.setValueAtTime(0.7, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
 
+    osc.start(now);
+    osc.stop(now + 0.18);
+  }
+
+  public playClimbKick(): void {
+    if (!this.ctx || !this.enabled) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(340, now);
+    osc.frequency.exponentialRampToValueAtTime(70, now + 0.16);
+
+    gain.gain.setValueAtTime(0.8, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+
     osc.connect(gain);
     gain.connect(this.ctx.destination);
 
     osc.start(now);
     osc.stop(now + 0.18);
+  }
+
+  public playClimbGrab(): void {
+    if (!this.ctx || !this.enabled) return;
+    const now = this.ctx.currentTime;
+
+    // Heavy metallic / leather clasp sound
+    const osc1 = this.ctx.createOscillator();
+    const osc2 = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc1.type = 'sine';
+    osc2.type = 'sawtooth';
+    osc1.frequency.setValueAtTime(180, now);
+    osc2.frequency.setValueAtTime(260, now);
+
+    gain.gain.setValueAtTime(0.7, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+
+    osc1.connect(gain);
+    osc2.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    osc1.start(now);
+    osc2.start(now);
+    osc1.stop(now + 0.22);
+    osc2.stop(now + 0.22);
+  }
+
+  public playStruggle(): void {
+    if (!this.ctx || !this.enabled) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(140, now);
+    osc.frequency.linearRampToValueAtTime(220, now + 0.1);
+
+    gain.gain.setValueAtTime(0.5, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.12);
   }
 }
 

@@ -892,85 +892,210 @@ export class GameRenderer {
     } else if (p.state === 'CLIMBING_V_PIPE') {
       // --- VERTICAL PIPE CLIMBING ANIMATION ---
       const climbCycle = Math.sin(Date.now() * 0.014);
+      const isKicking = p.climbKickTimer && p.climbKickTimer > 0;
+      const isGrabbing = Boolean(p.climbGrabbingId);
+      const isGrabbed = Boolean(p.grabbedByPlayerId);
 
-      // Facing the vertical pipe (looking right toward x = 920)
       // Torso
       ctx.fillStyle = clothColor;
       ctx.fillRect(-6, -26, 12, 16);
 
-      // Legs gripping the pipe
-      ctx.strokeStyle = '#1e293b';
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      // Left leg bent gripping pipe
-      ctx.moveTo(-3, -10);
-      ctx.lineTo(4, -6 + climbCycle * 5);
-      ctx.lineTo(6, -2 + climbCycle * 5);
-      // Right leg gripping pipe
-      ctx.moveTo(3, -10);
-      ctx.lineTo(4, -6 - climbCycle * 5);
-      ctx.lineTo(6, -2 - climbCycle * 5);
-      ctx.stroke();
-
-      // Head looking up
+      // Head
       ctx.fillStyle = skinTone;
       ctx.beginPath();
       ctx.arc(0, -32, 6.5, 0, Math.PI * 2);
       ctx.fill();
 
-      // Arms reaching up gripping vertical pipe
-      ctx.strokeStyle = skinTone;
-      ctx.lineWidth = 3.5;
-      ctx.beginPath();
-      // Upper arm reaching up
-      ctx.moveTo(0, -24);
-      ctx.lineTo(6, -28 - climbCycle * 6);
-      ctx.lineTo(6, -34 - climbCycle * 6);
-      // Lower arm pulling
-      ctx.moveTo(0, -24);
-      ctx.lineTo(6, -22 + climbCycle * 6);
-      ctx.lineTo(6, -18 + climbCycle * 6);
-      ctx.stroke();
+      if (isGrabbed) {
+        // Dangling helplessly while held beneath attacker with struggle jitter
+        const jitter = (p.struggleMeter && p.struggleMeter > 0) ? Math.sin(Date.now() * 0.06) * 2.5 : 0;
+        ctx.translate(jitter, 0);
+
+        // Arms reaching straight up to attacker
+        ctx.strokeStyle = skinTone;
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        ctx.moveTo(-3, -24); ctx.lineTo(-4, -40);
+        ctx.moveTo(3, -24);  ctx.lineTo(4, -40);
+        ctx.stroke();
+
+        // Legs dangling downward
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(-3, -10); ctx.lineTo(-4, 6); ctx.lineTo(-5, 14);
+        ctx.moveTo(3, -10);  ctx.lineTo(4, 8);  ctx.lineTo(5, 16);
+        ctx.stroke();
+
+      } else if (isKicking) {
+        // Kicking leg thrusting downward/forward
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 4.5;
+        ctx.beginPath();
+        // Left leg holding pipe
+        ctx.moveTo(-2, -10); ctx.lineTo(3, -4); ctx.lineTo(6, 0);
+        // Right leg kicking downward
+        ctx.moveTo(3, -10);  ctx.lineTo(-4, 6);  ctx.lineTo(-8, 18);
+        ctx.stroke();
+
+        // Motion swoosh line beneath kicking foot
+        ctx.strokeStyle = 'rgba(251, 191, 36, 0.85)';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(-8, 18, 10, Math.PI * 0.3, Math.PI * 0.9);
+        ctx.stroke();
+
+        // Hands gripping pipe tightly
+        ctx.strokeStyle = skinTone;
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        ctx.moveTo(0, -24); ctx.lineTo(6, -28); ctx.lineTo(6, -34);
+        ctx.moveTo(0, -24); ctx.lineTo(6, -20); ctx.lineTo(6, -16);
+        ctx.stroke();
+
+      } else if (isGrabbing) {
+        // One hand on pipe, one reaching down gripping victim
+        ctx.strokeStyle = skinTone;
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        // Upper arm on pipe
+        ctx.moveTo(0, -24); ctx.lineTo(6, -28); ctx.lineTo(6, -34);
+        // Lower arm reaching down grasping
+        ctx.moveTo(0, -24); ctx.lineTo(-2, -8); ctx.lineTo(0, 12);
+        ctx.stroke();
+
+        // Legs on pipe
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(-3, -10); ctx.lineTo(4, -6); ctx.lineTo(6, -2);
+        ctx.moveTo(3, -10);  ctx.lineTo(4, -2); ctx.lineTo(6, 4);
+        ctx.stroke();
+
+      } else {
+        // Normal climbing animation
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(-3, -10);
+        ctx.lineTo(4, -6 + climbCycle * 5);
+        ctx.lineTo(6, -2 + climbCycle * 5);
+        ctx.moveTo(3, -10);
+        ctx.lineTo(4, -6 - climbCycle * 5);
+        ctx.lineTo(6, -2 - climbCycle * 5);
+        ctx.stroke();
+
+        ctx.strokeStyle = skinTone;
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        ctx.moveTo(0, -24);
+        ctx.lineTo(6, -28 - climbCycle * 6);
+        ctx.lineTo(6, -34 - climbCycle * 6);
+        ctx.moveTo(0, -24);
+        ctx.lineTo(6, -22 + climbCycle * 6);
+        ctx.lineTo(6, -18 + climbCycle * 6);
+        ctx.stroke();
+      }
 
     } else if (p.state === 'HANGING_H_PIPE') {
       // --- HORIZONTAL CEILING PIPE BRACHIATION ---
       const handCycle = Math.sin(Date.now() * 0.014);
+      const isKicking = p.climbKickTimer && p.climbKickTimer > 0;
+      const isGrabbing = Boolean(p.climbGrabbingId);
+      const isGrabbed = Boolean(p.grabbedByPlayerId);
 
-      // Arms reaching STRAIGHT UP gripping pipe at y = H_PIPE_Y
-      ctx.strokeStyle = skinTone;
-      ctx.lineWidth = 3.5;
-      ctx.beginPath();
-      // Left arm grasping ceiling pipe
-      ctx.moveTo(-4, -14);
-      ctx.lineTo(-6 - handCycle * 5, -24);
-      ctx.lineTo(-7 - handCycle * 5, -28);
-      // Right arm grasping ceiling pipe
-      ctx.moveTo(4, -14);
-      ctx.lineTo(6 + handCycle * 5, -24);
-      ctx.lineTo(7 + handCycle * 5, -28);
-      ctx.stroke();
-
-      // Torso hanging suspended beneath hands
+      // Torso
       ctx.fillStyle = clothColor;
       ctx.fillRect(-5, -14, 10, 16);
 
-      // Head hanging between shoulders
+      // Head
       ctx.fillStyle = skinTone;
       ctx.beginPath();
       ctx.arc(0, -18, 6.5, 0, Math.PI * 2);
       ctx.fill();
 
-      // Legs dangling in mid-air
-      ctx.strokeStyle = '#1e293b';
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(-3, 2);
-      ctx.lineTo(-4 + handCycle * 4, 12);
-      ctx.lineTo(-5 + handCycle * 5, 20);
-      ctx.moveTo(3, 2);
-      ctx.lineTo(4 - handCycle * 4, 12);
-      ctx.lineTo(5 - handCycle * 5, 20);
-      ctx.stroke();
+      if (isGrabbed) {
+        // Dangling suspended
+        const jitter = (p.struggleMeter && p.struggleMeter > 0) ? Math.sin(Date.now() * 0.06) * 2.5 : 0;
+        ctx.translate(jitter, 0);
+
+        ctx.strokeStyle = skinTone;
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        ctx.moveTo(-3, -14); ctx.lineTo(-4, -36);
+        ctx.moveTo(3, -14);  ctx.lineTo(4, -36);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(-3, 2); ctx.lineTo(-4, 14); ctx.lineTo(-5, 22);
+        ctx.moveTo(3, 2);  ctx.lineTo(4, 16);  ctx.lineTo(5, 24);
+        ctx.stroke();
+
+      } else if (isKicking) {
+        // Hanging with both hands, kicking forward/downward
+        ctx.strokeStyle = skinTone;
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        ctx.moveTo(-4, -14); ctx.lineTo(-6, -24); ctx.lineTo(-7, -28);
+        ctx.moveTo(4, -14);  ctx.lineTo(6, -24);  ctx.lineTo(7, -28);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 4.5;
+        ctx.beginPath();
+        ctx.moveTo(-3, 2); ctx.lineTo(dir * 12, 10); ctx.lineTo(dir * 22, 16);
+        ctx.stroke();
+
+        // Kicking impact visual arc
+        ctx.strokeStyle = 'rgba(251, 191, 36, 0.85)';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(dir * 22, 16, 10, 0, Math.PI * 2);
+        ctx.stroke();
+
+      } else if (isGrabbing) {
+        // One hand on ceiling pipe, one hand reaching down
+        ctx.strokeStyle = skinTone;
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        ctx.moveTo(-4, -14); ctx.lineTo(-6, -24); ctx.lineTo(-7, -28);
+        // Grabbing arm down
+        ctx.moveTo(4, -14); ctx.lineTo(4, 2); ctx.lineTo(4, 18);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(-3, 2); ctx.lineTo(-4, 12); ctx.lineTo(-5, 20);
+        ctx.moveTo(3, 2);  ctx.lineTo(4, 12);  ctx.lineTo(5, 20);
+        ctx.stroke();
+
+      } else {
+        // Normal horizontal traverse
+        ctx.strokeStyle = skinTone;
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        ctx.moveTo(-4, -14);
+        ctx.lineTo(-6 - handCycle * 5, -24);
+        ctx.lineTo(-7 - handCycle * 5, -28);
+        ctx.moveTo(4, -14);
+        ctx.lineTo(6 + handCycle * 5, -24);
+        ctx.lineTo(7 + handCycle * 5, -28);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(-3, 2);
+        ctx.lineTo(-4 + handCycle * 4, 12);
+        ctx.lineTo(-5 + handCycle * 5, 20);
+        ctx.moveTo(3, 2);
+        ctx.lineTo(4 - handCycle * 4, 12);
+        ctx.lineTo(5 - handCycle * 5, 20);
+        ctx.stroke();
+      }
 
     } else if (p.state === 'FALLING') {
       // --- RAGDOLL / TUMBLING DOWNWARD ---
@@ -1018,9 +1143,37 @@ export class GameRenderer {
 
     ctx.restore();
 
-    // Overhead Status (Name & Health)
+    // Overhead Status (Name, Health, Grab & Struggle Prompts)
     ctx.textAlign = 'center';
-    if (p.stunnedTimer > 0) {
+
+    if (p.grabbedByPlayerId) {
+      // Grabbed Victim Struggle Meter
+      const strugglePct = Math.min(100, Math.max(0, p.struggleMeter || 0));
+      ctx.fillStyle = '#ef4444';
+      ctx.font = 'bold 10px monospace';
+      ctx.fillText(`⚠ GRABBED! MASH SPACE/W [${Math.floor(strugglePct)}%]`, p.x, p.y - 52);
+
+      const sWidth = 42;
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+      ctx.fillRect(p.x - sWidth / 2, p.y - 45, sWidth, 5);
+      ctx.fillStyle = strugglePct >= 70 ? '#22c55e' : (strugglePct >= 35 ? '#eab308' : '#ef4444');
+      ctx.fillRect(p.x - sWidth / 2, p.y - 45, sWidth * (strugglePct / 100), 5);
+      ctx.strokeStyle = '#f8fafc';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(p.x - sWidth / 2, p.y - 45, sWidth, 5);
+
+    } else if (p.climbGrabbingId && isLocal) {
+      // Attacker Holding Victim Prompt
+      ctx.fillStyle = '#f59e0b';
+      ctx.font = 'bold 10px monospace';
+      ctx.fillText('⚡ HOLDING PRISONER [S: DRAG DOWN | RELEASE KEY: DROP]', p.x, p.y - 50);
+
+    } else if (p.climbKickTimer && p.climbKickTimer > 0) {
+      ctx.fillStyle = '#f59e0b';
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText('💥 DOWNWARD KICK', p.x, p.y - 46);
+
+    } else if (p.stunnedTimer > 0) {
       ctx.fillStyle = '#fde047';
       ctx.font = 'bold 11px sans-serif';
       ctx.fillText('💫 STUNNED', p.x, p.y - 42);

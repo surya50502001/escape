@@ -650,4 +650,269 @@ describe('The Pit - Complete Multiplayer Audit & Unit Tests', () => {
       assert.ok(victim.stunnedTimer > 0, 'Falling rock impact must stun player');
     });
   });
+
+  // ========================================================
+  // 9. CLIMBING COMBAT: KICK, GRAB & PULL-DOWN
+  // ========================================================
+  describe('Climbing Combat: Kick, Grab & Pull-Down', () => {
+    it('should allow a climbing player to kick downward, detaching victim below with knockback and damage', () => {
+      const attacker = engine.addHumanPlayer('p_attacker', 'Attacker')!;
+      const victim = engine.addHumanPlayer('p_victim', 'Victim')!;
+
+      attacker.x = V_PIPE_X;
+      attacker.y = 250;
+      attacker.state = 'CLIMBING_V_PIPE';
+
+      victim.x = V_PIPE_X;
+      victim.y = 290; // Strictly beneath attacker (dy = 40 <= 65)
+      victim.state = 'CLIMBING_V_PIPE';
+      const initialHealth = victim.health;
+
+      const kickInput = createDefaultInput();
+      kickInput.tackle = true;
+      kickInput.climbKick = true;
+      engine.handleInput(attacker.id, kickInput);
+
+      assert.equal(victim.state, 'FALLING', 'Kicked victim must detach from pipe into falling state');
+      assert.ok(victim.vy > 0, 'Victim should receive downward knockback');
+      assert.ok(victim.vx < 0, 'Victim should be knocked away from wall pipe');
+      assert.ok(victim.health < initialHealth, 'Kick must inflict damage');
+      assert.ok(victim.stunnedTimer > 0, 'Kick must apply stun');
+      assert.ok(attacker.climbAttackCooldown > 0, 'Attacker must enter recovery cooldown');
+    });
+
+    it('should NOT hit players positioned above or too far away', () => {
+      const attacker = engine.addHumanPlayer('p_attacker', 'Attacker')!;
+      const abovePlayer = engine.addHumanPlayer('p_above', 'AbovePlayer')!;
+      const farPlayer = engine.addHumanPlayer('p_far', 'FarPlayer')!;
+
+      attacker.x = V_PIPE_X;
+      attacker.y = 350;
+      attacker.state = 'CLIMBING_V_PIPE';
+
+      abovePlayer.x = V_PIPE_X;
+      abovePlayer.y = 300; // Positioned ABOVE attacker
+      abovePlayer.state = 'CLIMBING_V_PIPE';
+
+      farPlayer.x = V_PIPE_X;
+      farPlayer.y = 480; // Positioned too far below (> 65px)
+      farPlayer.state = 'CLIMBING_V_PIPE';
+
+      const kickInput = createDefaultInput();
+      kickInput.tackle = true;
+      kickInput.climbKick = true;
+      engine.handleInput(attacker.id, kickInput);
+
+      assert.equal(abovePlayer.state, 'CLIMBING_V_PIPE', 'Player above must not be hit');
+      assert.equal(abovePlayer.health, 100);
+      assert.equal(farPlayer.state, 'CLIMBING_V_PIPE', 'Player too far below must not be hit');
+      assert.equal(farPlayer.health, 100);
+    });
+
+    it('should enforce attack cooldown and recovery preventing kick spamming', () => {
+      const attacker = engine.addHumanPlayer('p_attacker', 'Attacker')!;
+      const victim = engine.addHumanPlayer('p_victim', 'Victim')!;
+
+      attacker.x = V_PIPE_X;
+      attacker.y = 250;
+      attacker.state = 'CLIMBING_V_PIPE';
+      attacker.climbAttackCooldown = 0.6; // In active cooldown
+
+      victim.x = V_PIPE_X;
+      victim.y = 290;
+      victim.state = 'CLIMBING_V_PIPE';
+
+      const kickInput = createDefaultInput();
+      kickInput.tackle = true;
+      kickInput.climbKick = true;
+      engine.handleInput(attacker.id, kickInput);
+
+      assert.equal(victim.state, 'CLIMBING_V_PIPE', 'Attack in cooldown must not execute kick');
+      assert.equal(victim.health, 100);
+    });
+
+    it('should grab nearby player beneath attacker when kick misses and grab input is held', () => {
+      const attacker = engine.addHumanPlayer('p_attacker', 'Attacker')!;
+      const victim = engine.addHumanPlayer('p_victim', 'Victim')!;
+
+      attacker.x = V_PIPE_X;
+      attacker.y = 250;
+      attacker.state = 'CLIMBING_V_PIPE';
+
+      // Position victim within grab range (dy = 68 <= 70)
+      victim.x = V_PIPE_X;
+      victim.y = 318;
+      victim.state = 'CLIMBING_V_PIPE';
+
+      const grabInput = createDefaultInput();
+      grabInput.tackle = true;
+      grabInput.climbGrab = true;
+      engine.handleInput(attacker.id, grabInput);
+
+      assert.equal(attacker.climbGrabbingId, victim.id, 'Attacker should lock grab on victim');
+      assert.equal(victim.grabbedByPlayerId, attacker.id, 'Victim should be marked as grabbed');
+    });
+
+    it('should fail grab cleanly without affecting attacker if no valid victim is in range', () => {
+      const attacker = engine.addHumanPlayer('p_attacker', 'Attacker')!;
+      attacker.x = V_PIPE_X;
+      attacker.y = 250;
+      attacker.state = 'CLIMBING_V_PIPE';
+
+      const grabInput = createDefaultInput();
+      grabInput.tackle = true;
+      grabInput.climbGrab = true;
+      engine.handleInput(attacker.id, grabInput);
+
+      assert.equal(attacker.climbGrabbingId, null, 'Grab must fail when no victim is near');
+      assert.equal(attacker.state, 'CLIMBING_V_PIPE');
+    });
+
+    it('should hold and drag grabbed victim downward along the pipe', () => {
+      const attacker = engine.addHumanPlayer('p_attacker', 'Attacker')!;
+      const victim = engine.addHumanPlayer('p_victim', 'Victim')!;
+
+      attacker.x = V_PIPE_X;
+      attacker.y = 200;
+      attacker.state = 'CLIMBING_V_PIPE';
+
+      victim.x = V_PIPE_X;
+      victim.y = 242;
+      victim.state = 'CLIMBING_V_PIPE';
+
+      attacker.climbGrabbingId = victim.id;
+      victim.grabbedByPlayerId = attacker.id;
+
+      // Attacker holds grab and presses DOWN
+      const dragInput = createDefaultInput();
+      dragInput.climbGrab = true;
+      dragInput.down = true;
+      engine.handleInput(attacker.id, dragInput);
+
+      // Simulate physics ticks
+      for (let i = 0; i < 5; i++) {
+        engine.update();
+      }
+
+      assert.ok(attacker.y > 200, 'Attacker should move downward while dragging');
+      assert.equal(victim.y, attacker.y + 42, 'Victim must remain attached directly beneath attacker');
+    });
+
+    it('should allow victim to struggle, build struggle meter, and break free with counter-stun', () => {
+      const attacker = engine.addHumanPlayer('p_attacker', 'Attacker')!;
+      const victim = engine.addHumanPlayer('p_victim', 'Victim')!;
+
+      attacker.x = V_PIPE_X;
+      attacker.y = 250;
+      attacker.state = 'CLIMBING_V_PIPE';
+
+      victim.x = V_PIPE_X;
+      victim.y = 292;
+      victim.state = 'CLIMBING_V_PIPE';
+
+      attacker.climbGrabbingId = victim.id;
+      victim.grabbedByPlayerId = attacker.id;
+      victim.struggleMeter = 0;
+
+      // Victim struggles repeatedly
+      const struggleInput = createDefaultInput();
+      struggleInput.struggle = true;
+
+      for (let i = 0; i < 4; i++) {
+        engine.handleInput(victim.id, struggleInput);
+      }
+
+      assert.equal(victim.grabbedByPlayerId, null, 'Victim should break free when meter fills');
+      assert.equal(attacker.climbGrabbingId, null, 'Attacker should drop grab');
+      assert.ok(attacker.stunnedTimer > 0, 'Attacker must be counter-stunned on break-free');
+    });
+
+    it('should drop victim into falling state when attacker releases grab input', () => {
+      const attacker = engine.addHumanPlayer('p_attacker', 'Attacker')!;
+      const victim = engine.addHumanPlayer('p_victim', 'Victim')!;
+
+      attacker.x = V_PIPE_X;
+      attacker.y = 250;
+      attacker.state = 'CLIMBING_V_PIPE';
+
+      victim.x = V_PIPE_X;
+      victim.y = 292;
+      victim.state = 'CLIMBING_V_PIPE';
+
+      attacker.climbGrabbingId = victim.id;
+      victim.grabbedByPlayerId = attacker.id;
+
+      // Attacker releases grab
+      const releaseInput = createDefaultInput();
+      releaseInput.climbGrab = false;
+      releaseInput.tackle = false;
+      engine.handleInput(attacker.id, releaseInput);
+
+      assert.equal(attacker.climbGrabbingId, null);
+      assert.equal(victim.grabbedByPlayerId, null);
+      assert.equal(victim.state, 'FALLING', 'Victim must fall when grab is released');
+    });
+
+    it('should immediately break grab when attacker takes damage', () => {
+      const attacker = engine.addHumanPlayer('p_attacker', 'Attacker')!;
+      const victim = engine.addHumanPlayer('p_victim', 'Victim')!;
+
+      attacker.x = V_PIPE_X;
+      attacker.y = 250;
+      attacker.state = 'CLIMBING_V_PIPE';
+
+      victim.x = V_PIPE_X;
+      victim.y = 292;
+      victim.state = 'CLIMBING_V_PIPE';
+
+      attacker.climbGrabbingId = victim.id;
+      victim.grabbedByPlayerId = attacker.id;
+
+      // Attacker takes damage
+      engine.damagePlayer(attacker, 20);
+
+      assert.equal(attacker.climbGrabbingId, null, 'Grab must be broken when attacker takes damage');
+      assert.equal(victim.grabbedByPlayerId, null);
+      assert.equal(victim.state, 'FALLING');
+    });
+
+    it('should prevent multiple players from grabbing the same victim or a grabbed victim from grabbing', () => {
+      const attacker1 = engine.addHumanPlayer('p_att1', 'Attacker 1')!;
+      const victim = engine.addHumanPlayer('p_victim', 'Victim')!;
+      const attacker2 = engine.addHumanPlayer('p_att2', 'Attacker 2')!;
+      const thirdPlayer = engine.addHumanPlayer('p_third', 'Third Player')!;
+
+      attacker1.x = V_PIPE_X;
+      attacker1.y = 200;
+      attacker1.state = 'CLIMBING_V_PIPE';
+
+      victim.x = V_PIPE_X;
+      victim.y = 250;
+      victim.state = 'CLIMBING_V_PIPE';
+
+      attacker2.x = V_PIPE_X;
+      attacker2.y = 210;
+      attacker2.state = 'CLIMBING_V_PIPE';
+
+      thirdPlayer.x = V_PIPE_X;
+      thirdPlayer.y = 300;
+      thirdPlayer.state = 'CLIMBING_V_PIPE';
+
+      // Attacker 1 grabs victim
+      attacker1.climbGrabbingId = victim.id;
+      victim.grabbedByPlayerId = attacker1.id;
+
+      // Attacker 2 tries to grab the same victim
+      const grabInput = createDefaultInput();
+      grabInput.tackle = true;
+      grabInput.climbGrab = true;
+      engine.handleInput(attacker2.id, grabInput);
+
+      assert.equal(attacker2.climbGrabbingId, null, 'Second attacker must not be able to grab already grabbed victim');
+
+      // Grabbed victim tries to grab third player below
+      engine.handleInput(victim.id, grabInput);
+      assert.equal(victim.climbGrabbingId, null, 'Grabbed victim must not be able to grab others');
+    });
+  });
 });

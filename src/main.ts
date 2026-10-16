@@ -175,6 +175,18 @@ function connectToGame(name: string): void {
               if (ev.x !== undefined && ev.y !== undefined) {
                 renderer.addBloodSparks(ev.x, ev.y, '#dc2626', 15);
               }
+            } else if (ev.type === 'CLIMB_KICK') {
+              sound.playClimbKick();
+              if (ev.x !== undefined && ev.y !== undefined) {
+                renderer.addBloodSparks(ev.x, ev.y, '#f59e0b', 14);
+              }
+            } else if (ev.type === 'CLIMB_GRAB') {
+              sound.playClimbGrab();
+              if (ev.x !== undefined && ev.y !== undefined) {
+                renderer.addBloodSparks(ev.x, ev.y, '#38bdf8', 10);
+              }
+            } else if (ev.type === 'CLIMB_STRUGGLE') {
+              sound.playStruggle();
             }
           }
         }

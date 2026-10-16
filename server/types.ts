@@ -24,6 +24,11 @@ export interface Player {
   hasEscaped: boolean;
   escapeTime?: string;
   sabotages: number;
+  climbKickTimer: number;
+  climbAttackCooldown: number;
+  climbGrabbingId: string | null;
+  grabbedByPlayerId: string | null;
+  struggleMeter: number;
 }
 
 export interface Rope {
@@ -93,7 +98,7 @@ export interface SniperShot {
 }
 
 export interface SoundEvent {
-  type: 'ANNOUNCEMENT' | 'CLANG' | 'GUNSHOT' | 'TACKLE' | 'ROCK_HIT' | 'ROPE_ATTACH' | 'ROPE_PULL' | 'FALL_IMPACT' | 'ESCAPE' | 'CRASH' | 'STEAM_HISS' | 'STEAM_BURST' | 'ROCK_FALL' | 'SPIKE_HIT';
+  type: 'ANNOUNCEMENT' | 'CLANG' | 'GUNSHOT' | 'TACKLE' | 'ROCK_HIT' | 'ROPE_ATTACH' | 'ROPE_PULL' | 'FALL_IMPACT' | 'ESCAPE' | 'CRASH' | 'STEAM_HISS' | 'STEAM_BURST' | 'ROCK_FALL' | 'SPIKE_HIT' | 'CLIMB_KICK' | 'CLIMB_GRAB' | 'CLIMB_STRUGGLE';
   x?: number;
   y?: number;
 }
@@ -143,8 +148,11 @@ export interface ClientInput {
   jump: boolean;
   interact: boolean; // 'E' to pick up/drop/release rope
   attack: boolean;   // Throw rock or rope
-  tackle: boolean;   // Spacebar: tackle or yank rope
+  tackle: boolean;   // Spacebar: tackle or yank rope or climbing kick/grab
   pull?: boolean;    // Pull attached victim
+  climbKick?: boolean;  // Climbing downward kick
+  climbGrab?: boolean;  // Climbing hold grab
+  struggle?: boolean;   // Struggle to break free when grabbed
   aimAngle: number;
 }
 

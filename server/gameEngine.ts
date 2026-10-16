@@ -194,7 +194,12 @@ export class GameEngine {
       attackCooldown: 0,
       rocks: 1,
       hasEscaped: false,
-      sabotages: 0
+      sabotages: 0,
+      climbKickTimer: 0,
+      climbAttackCooldown: 0,
+      climbGrabbingId: null,
+      grabbedByPlayerId: null,
+      struggleMeter: 0
     };
 
     this.state.players.push(p);
@@ -203,13 +208,188 @@ export class GameEngine {
     return p;
   }
 
+  public releaseClimbGrab(grabber: Player, dropVictim: boolean = true): void {
+    if (!grabber.climbGrabbingId) return;
+    const victim = this.state.players.find(p => p.id === grabber.climbGrabbingId);
+    grabber.climbGrabbingId = null;
+    if (victim) {
+      victim.grabbedByPlayerId = null;
+      victim.struggleMeter = 0;
+      if (dropVictim && victim.state !== 'DEAD' && !victim.hasEscaped) {
+        victim.state = 'FALLING';
+        victim.isGrounded = false;
+        victim.vy = 90;
+      }
+    }
+  }
+
+  public breakGrabOnVictim(victim: Player): void {
+    if (!victim.grabbedByPlayerId) return;
+    const grabber = this.state.players.find(p => p.id === victim.grabbedByPlayerId);
+    victim.grabbedByPlayerId = null;
+    victim.struggleMeter = 0;
+    if (grabber) {
+      grabber.climbGrabbingId = null;
+    }
+  }
+
+  public handleClimbingCombat(p: Player, input: ClientInput): boolean {
+    if (p.state !== 'CLIMBING_V_PIPE' && p.state !== 'HANGING_H_PIPE') {
+      if (p.climbGrabbingId) this.releaseClimbGrab(p, true);
+      if (p.grabbedByPlayerId) this.breakGrabOnVictim(p);
+      return false;
+    }
+
+    // 1. VICTIM STRUGGLE COUNTERPLAY
+    if (p.grabbedByPlayerId) {
+      const strugglePressed = Boolean(input.struggle || input.tackle || input.jump || input.up);
+      if (strugglePressed) {
+        const staminaCost = 10;
+        p.stamina = Math.max(0, p.stamina - staminaCost);
+        // Gain struggle escape progress (full speed if has stamina, half if exhausted)
+        p.struggleMeter = Math.min(100, p.struggleMeter + (p.stamina > 0 ? 30 : 16));
+        this.emitSound({ type: 'CLIMB_STRUGGLE', x: p.x, y: p.y });
+
+        if (p.struggleMeter >= 100) {
+          // Break free! Stunning the attacker briefly
+          const grabber = this.state.players.find(x => x.id === p.grabbedByPlayerId);
+          if (grabber) {
+            grabber.climbGrabbingId = null;
+            grabber.stunnedTimer = 0.6;
+            grabber.climbAttackCooldown = 1.0;
+            if (grabber.state === 'CLIMBING_V_PIPE') {
+              grabber.vx = -60;
+            }
+          }
+          p.grabbedByPlayerId = null;
+          p.struggleMeter = 0;
+          this.emitSound({ type: 'TACKLE', x: p.x, y: p.y });
+        }
+      }
+      p.vx = 0;
+      p.vy = 0;
+      return true; // Grabbed victim cannot climb or traverse while held
+    }
+
+    // 2. ATTACKER HOLDING & DRAGGING VICTIM
+    if (p.climbGrabbingId) {
+      const isHolding = Boolean(input.climbGrab || input.tackle);
+      if (!isHolding) {
+        // Grab released by attacker
+        this.releaseClimbGrab(p, true);
+        return false;
+      }
+
+      // Drag downward
+      if (input.down) {
+        p.vy = p.state === 'CLIMBING_V_PIPE' ? 75 : 40;
+      } else {
+        p.vy = 0;
+      }
+      p.vx = 0;
+
+      // Check if dragged to floor
+      if (p.y >= FLOOR_Y) {
+        this.releaseClimbGrab(p, false);
+        p.y = FLOOR_Y;
+        p.state = 'ON_FLOOR';
+        p.isGrounded = true;
+      }
+      return true;
+    }
+
+    // 3. KICK OR GRAB INITIATION
+    const attackPressed = Boolean(input.climbKick || input.tackle);
+    if (attackPressed && p.climbAttackCooldown <= 0) {
+      p.climbKickTimer = 0.22;
+      p.climbAttackCooldown = 0.75;
+      this.emitSound({ type: 'CLIMB_KICK', x: p.x, y: p.y });
+
+      // Directional hit-scan: strictly beneath/forward from attacking player
+      let hitTarget: Player | undefined;
+      if (p.state === 'CLIMBING_V_PIPE') {
+        hitTarget = this.state.players.find(target => {
+          if (target.id === p.id || target.state === 'DEAD' || target.hasEscaped) return false;
+          const dy = target.y - p.y;
+          const dx = Math.abs(target.x - p.x);
+          // Target must be strictly beneath attacker (dy > 10) and within 65px
+          return dy > 10 && dy <= 65 && dx <= 30;
+        });
+      } else if (p.state === 'HANGING_H_PIPE') {
+        hitTarget = this.state.players.find(target => {
+          if (target.id === p.id || target.state === 'DEAD' || target.hasEscaped) return false;
+          const dy = target.y - p.y;
+          const fwdX = p.facing === 'LEFT' ? (p.x - target.x) : (target.x - p.x);
+          return dy >= -10 && dy <= 65 && fwdX >= 0 && fwdX <= 55;
+        });
+      }
+
+      if (hitTarget) {
+        // Kick connects! Detach target from pipe with knockback impulse & stun
+        hitTarget.state = 'FALLING';
+        hitTarget.isGrounded = false;
+        hitTarget.stunnedTimer = 0.8;
+        if (p.state === 'CLIMBING_V_PIPE') {
+          hitTarget.vx = -160;
+          hitTarget.vy = 220;
+        } else {
+          hitTarget.vx = (p.facing === 'LEFT' ? -180 : 180);
+          hitTarget.vy = 200;
+        }
+        this.damagePlayer(hitTarget, 18, p);
+        this.emitSound({ type: 'TACKLE', x: hitTarget.x, y: hitTarget.y });
+        this.emitSound({ type: 'FALL_IMPACT', x: hitTarget.x, y: hitTarget.y });
+      } else {
+        // Kick missed: check if grab input is held
+        const grabPressed = Boolean(input.climbGrab || input.tackle);
+        if (grabPressed) {
+          let grabTarget: Player | undefined;
+          if (p.state === 'CLIMBING_V_PIPE') {
+            grabTarget = this.state.players.find(target => {
+              if (target.id === p.id || target.state === 'DEAD' || target.hasEscaped) return false;
+              if (target.grabbedByPlayerId || target.climbGrabbingId) return false;
+              const dy = target.y - p.y;
+              const dx = Math.abs(target.x - p.x);
+              return dy > 10 && dy <= 70 && dx <= 32;
+            });
+          } else if (p.state === 'HANGING_H_PIPE') {
+            grabTarget = this.state.players.find(target => {
+              if (target.id === p.id || target.state === 'DEAD' || target.hasEscaped) return false;
+              if (target.grabbedByPlayerId || target.climbGrabbingId) return false;
+              const dy = target.y - p.y;
+              const fwdX = p.facing === 'LEFT' ? (p.x - target.x) : (target.x - p.x);
+              return dy >= -10 && dy <= 70 && fwdX >= 0 && fwdX <= 60;
+            });
+          }
+
+          if (grabTarget) {
+            p.climbGrabbingId = grabTarget.id;
+            grabTarget.grabbedByPlayerId = p.id;
+            grabTarget.struggleMeter = 0;
+            grabTarget.vx = 0;
+            grabTarget.vy = 0;
+            this.emitSound({ type: 'CLIMB_GRAB', x: grabTarget.x, y: grabTarget.y });
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+
   public removePlayer(id: string, permanent: boolean = false): void {
     const player = this.state.players.find(p => p.id === id);
     if (!player) return;
 
-    // Immediately clear rope interactions so other players aren't stuck
+    // Immediately clear rope and climbing combat interactions so other players aren't stuck
     if (this.state.rope.heldByPlayerId === id || this.state.rope.attachedPlayerId === id) {
       this.dropRope();
+    }
+    if (player.climbGrabbingId) {
+      this.releaseClimbGrab(player, true);
+    }
+    if (player.grabbedByPlayerId) {
+      this.breakGrabOnVictim(player);
     }
 
     if (this.state.phase === 'LOBBY' || this.state.phase === 'MATCH_OVER' || permanent) {
@@ -292,6 +472,12 @@ export class GameEngine {
     } else if (p.state === 'CLIMBING_V_PIPE') {
       p.x = V_PIPE_X;
       p.vx = 0;
+
+      const combatOverrode = this.handleClimbingCombat(p, input);
+      if (combatOverrode) {
+        return;
+      }
+
       const climbSpeed = 115;
 
       if (input.up) {
@@ -324,6 +510,12 @@ export class GameEngine {
     } else if (p.state === 'HANGING_H_PIPE') {
       p.y = H_PIPE_Y + 15;
       p.vy = 0;
+
+      const combatOverrode = this.handleClimbingCombat(p, input);
+      if (combatOverrode) {
+        return;
+      }
+
       const traverseSpeed = 100;
 
       if (input.left) {
@@ -411,6 +603,15 @@ export class GameEngine {
     if (player.state === 'DEAD' || player.hasEscaped) return;
 
     player.health = Math.max(0, player.health - amount);
+
+    // Taking damage interrupts climbing grabs
+    if (player.climbGrabbingId) {
+      this.releaseClimbGrab(player, true);
+    }
+    if (player.grabbedByPlayerId) {
+      this.breakGrabOnVictim(player);
+    }
+
     if (player.health <= 0) {
       player.health = 0;
       player.state = 'DEAD';
@@ -879,9 +1080,40 @@ export class GameEngine {
     for (const p of this.state.players) {
       if (p.state === 'DEAD' || p.hasEscaped) continue;
 
-      if (p.stamina < 100) p.stamina = Math.min(100, p.stamina + 20 * DT);
+      if (p.stamina < 100 && !p.climbGrabbingId) p.stamina = Math.min(100, p.stamina + 20 * DT);
       if (p.tackleCooldown > 0) p.tackleCooldown -= DT;
       if (p.attackCooldown > 0) p.attackCooldown -= DT;
+      if (p.climbAttackCooldown > 0) p.climbAttackCooldown -= DT;
+      if (p.climbKickTimer > 0) p.climbKickTimer -= DT;
+
+      // Handle active climbing grab maintenance and stamina drain
+      if (p.climbGrabbingId) {
+        const victim = this.state.players.find(x => x.id === p.climbGrabbingId);
+        if (!victim || victim.state === 'DEAD' || victim.hasEscaped || p.stunnedTimer > 0 || (p.state !== 'CLIMBING_V_PIPE' && p.state !== 'HANGING_H_PIPE')) {
+          this.releaseClimbGrab(p, true);
+        } else {
+          // Attacker drains stamina while holding victim
+          p.stamina = Math.max(0, p.stamina - 14 * DT);
+          if (p.stamina <= 0) {
+            this.releaseClimbGrab(p, true);
+            p.climbAttackCooldown = 1.0;
+          } else {
+            // Keep victim attached beneath attacker
+            victim.x = p.x;
+            victim.y = p.y + 42;
+            victim.vx = 0;
+            victim.vy = 0;
+            victim.isGrounded = false;
+          }
+        }
+      }
+
+      if (p.grabbedByPlayerId) {
+        const grabber = this.state.players.find(x => x.id === p.grabbedByPlayerId);
+        if (!grabber || grabber.state === 'DEAD' || grabber.hasEscaped || grabber.climbGrabbingId !== p.id) {
+          p.grabbedByPlayerId = null;
+        }
+      }
 
       if (p.stunnedTimer > 0) {
         p.stunnedTimer -= DT;
@@ -943,9 +1175,23 @@ export class GameEngine {
       } else if (p.state === 'CLIMBING_V_PIPE') {
         p.y += p.vy * DT;
         p.x = V_PIPE_X;
+        if (p.climbGrabbingId) {
+          const victim = this.state.players.find(x => x.id === p.climbGrabbingId);
+          if (victim) {
+            victim.x = p.x;
+            victim.y = p.y + 42;
+          }
+        }
       } else if (p.state === 'HANGING_H_PIPE') {
         p.x += p.vx * DT;
         p.y = H_PIPE_Y + 15;
+        if (p.climbGrabbingId) {
+          const victim = this.state.players.find(x => x.id === p.climbGrabbingId);
+          if (victim) {
+            victim.x = p.x;
+            victim.y = p.y + 42;
+          }
+        }
       }
 
       // Moving Barrier Solid Obstacle Collision (prevent crossing through moving gate)
