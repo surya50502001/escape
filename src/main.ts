@@ -82,6 +82,15 @@ ws.onmessage = (event) => {
             sound.playEscape();
           } else if (ev.type === 'ANNOUNCEMENT') {
             sound.playAnnouncement();
+          } else if (ev.type === 'ROPE_ATTACH') {
+            sound.playRockHit();
+          } else if (ev.type === 'ROPE_PULL') {
+            sound.playTackle();
+          } else if (ev.type === 'FALL_IMPACT') {
+            sound.playTackle();
+            if (ev.x !== undefined && ev.y !== undefined) {
+              renderer.addBloodSparks(ev.x, ev.y, '#94a3b8', 12);
+            }
           }
         }
       }

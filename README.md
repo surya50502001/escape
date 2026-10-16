@@ -1,41 +1,77 @@
-# THE PIT (ESCAPE) - 10-Player Prison Break Survival
+# THE PIT (ESCAPE) - 2D Side-View Prison Escape Survival
 
-A real-time multiplayer 2D top-down prison break survival game. 10 thieves are trapped in a subterranean cell. At the top of the iron ladder stands an Anonymous Overseer with a sniper rifle.
+A dark, claustrophobic 2D side-view cross-sectional multiplayer prison escape survival game. Ten prisoners are locked inside an enclosed underground chamber.
 
-Over the course of a persistent 10-minute survival match, the Overseer periodically unlatches the hatch and announces how many prisoners can leave (e.g., *"I WILL TAKE 1 PRISONER"*). If excess prisoners attempt to climb at once, the Overseer executes them. The remaining prisoners wait in agony between signals... but the Overseer may stop speaking at any time. When the 10-minute timer hits 0:00, all prisoners remaining in the pit are purged.
+The camera shows a **side-on, cross-sectional view of the room** like a gritty 2D survival platformer. The physical environment and traversal route are the central focus.
 
 ---
 
-## 🎮 Features
-- **10-Player Real-Time Multiplayer:** Built on WebSockets (30 Hz authoritative tick server).
-- **Realistic 2D Human Top-Down Anatomy:** Detailed inmate vests, muscular arms, alternating footstep boots, hand-over-hand ladder climbing, and sprawling fallen bodies.
-- **Physical Sabotage Mechanics:**
-  - **Tackle (`Spacebar`):** Dash and slam into climbing prisoners to stun them and reset their climb progress.
-  - **Throw Rocks (`Left Click`):** Chuck jagged stones from a distance to interrupt escapes.
-- **The Anonymous Overseer:** Announces dynamic quotas, monitors ladder rungs, and snipes quota violators.
-- **Procedural Web Audio:** Zero-dependency realistic gunfire, alarms, metallic clangs, and horns using Web Audio API synthesis.
-- **Smart Bot AI:** 9 unique AI prisoners (*Rusty Pete*, *Mad Dog Boris*, *Shiv Miller*, etc.) that brawl, sabotage climbers, and sprint for open ladders.
+## 🗺️ Exact Level Layout & Traversal Route
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│ [OVERSEER & HATCH]  ══════ HORIZONTAL CEILING PIPE ═══════╗            │
+│  (Upper-Left duct)   (Hand-over-hand traversal to left)    ║            │
+│                                                           ║            │
+│                                                           ║ VERTICAL   │
+│                                                           ║ WALL PIPE  │
+│                                                           ║ (Climb up) │
+│                                                           ║            │
+│                                                           ║            │
+│               [SINGLE ROPE ON FLOOR]                      ║            │
+│═══════════════════════════════════════════════════════════╩════════════│
+│                     DIRTY CONCRETE PIT FLOOR                           │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+The traversal path is:
+**Floor ➔ Climb right-wall pipe ➔ Hang underneath ceiling pipe ➔ Traverse hand-over-hand to the left ➔ Reach upper-left escape hatch.**
+
+---
+
+## 💀 Game Mechanics
+
+1. **One Enclosed Underground Chamber:**
+   - Tall rough concrete/rock walls with industrial grime, steel girders, water seepage, and harsh lighting.
+   - Floor at bottom ($Y = 620$) where all prisoners initially stand.
+2. **The Pipe Traversal:**
+   - **Right-Wall Vertical Pipe ($X = 920$):** Shinny and climb upward with `W/Up` or down with `S/Down`.
+   - **Ceiling Horizontal Pipe ($Y = 90$):** Hang underneath with both arms and traverse hand-over-hand toward the escape opening with `A/Left`.
+   - Players can lose grip, get pulled down, or be knocked off by rocks or tackles.
+3. **The Single Floor Rope:**
+   - A single coiled rope sits on the concrete floor.
+   - Any prisoner can walk to it and press `E` to pick it up.
+   - Aim with mouse and Click to throw the rope toward climbing or hanging prisoners.
+   - If attached, press `Spacebar` to violently jerk the victim off the pipe down to the concrete floor!
+4. **The Anonymous Overseer at Upper-Left:**
+   - Shadowy silhouette standing in the upper-left escape duct with a scoped sniper rifle.
+   - Periodically announces the escape quota (e.g. *"I WILL TAKE 1 PRISONER"*).
+   - If multiple prisoners touch the hatch simultaneously or violate quota, the Overseer snipes them.
+5. **Realistic 2D Human Prisoner Silhouettes:**
+   - Proportionate human bodies with articulated limbs, prison clothing, realistic walk/run cycles, vertical pipe climbing, and ceiling hanging animations.
+   - Not colorful cartoons, spacesuits, or Among Us astronauts.
 
 ---
 
 ## 🕹️ Controls
-- **`WASD` / Arrows:** Move
-- **Mouse:** Aim
-- **Left Click:** Throw Rock / Attack
-- **Spacebar:** Tackle Lunge / Hold on ladder to climb out
-- **Audio Toggle:** Enable/disable sounds
+
+| Key | Action |
+| :--- | :--- |
+| **`A` / `D`** or Left / Right | Run left / right across the floor |
+| **`W`** or Up | Jump / Grab and climb up the right-wall pipe |
+| **`S`** or Down | Climb down / Drop off pipe into the pit |
+| **`E`** | Pick up rope from floor / Drop rope |
+| **Mouse Cursor** | Aim throw angle |
+| **Left Click** | Throw rope / Throw rock |
+| **`Spacebar`** | Yank attached rope / Tackle dash on floor |
+| **Audio Toggle** | Toggle procedural sound effects |
 
 ---
 
 ## 🚀 Quickstart
 ```bash
-# Install dependencies
 npm install
-
-# Build client
 npm run build
-
-# Start authoritative server & client
 npm start
 ```
 Open [http://localhost:3001](http://localhost:3001) in your browser.

@@ -1,28 +1,32 @@
-import { GameState, GamePhase, Player, Projectile, SniperShot, SoundEvent, ClientInput } from './types.js';
+import { 
+  GameState, GamePhase, Player, Projectile, SniperShot, SoundEvent, ClientInput, Rope, HatchZone,
+  CHAMBER_WIDTH, CHAMBER_HEIGHT, FLOOR_Y, V_PIPE_X, V_PIPE_TOP_Y, H_PIPE_Y, H_PIPE_EXIT_X 
+} from './types.js';
 
-export const ARENA_WIDTH = 1000;
-export const ARENA_HEIGHT = 700;
-export const LADDER_ZONE = { x: 450, y: 30, width: 100, height: 110 };
-const TICK_RATE = 30; // 30 Hz
+export const HATCH_ZONE: HatchZone = { x: 40, y: 40, width: 90, height: 90 };
+
+const TICK_RATE = 30;
 const DT = 1 / TICK_RATE;
+const GRAVITY = 750;
 
 const BOT_NAMES = [
   'Rusty Pete', 'Shiv Miller', 'Big Knuckles', 'Rat-Bite Sal', 
   'Iron Jaw', 'Shadow Fox', 'One-Eye Jack', 'Snake Eyes', 'Mad Dog Boris'
 ];
 
+// Dark, muted prison jumpsuit shades
 const BOT_COLORS = [
-  '#e67e22', '#e74c3c', '#9b59b6', '#3498db', 
-  '#1abc9c', '#f1c40f', '#d35400', '#2ecc71', '#e84393'
+  '#c26d2e', '#964338', '#634766', '#3b5a7a', 
+  '#3f7065', '#997e36', '#854b24', '#3d6e52', '#7a3e5c'
 ];
 
 export class GameEngine {
   public state: GameState;
   private soundEventsQueue: SoundEvent[] = [];
-  private matchTimer: number = 600; // 10 minutes = 600s
-  private nextSignalTimer: number = 15; // Countdown to next signal
-  private signalWindowTimer: number = 0; // Countdown for open hatch window
-  private finalSilenceActive: boolean = false; // If true, Anonymous will never speak again
+  private matchTimer: number = 600; // 10 minutes
+  private nextSignalTimer: number = 14;
+  private signalWindowTimer: number = 0;
+  private finalSilenceActive: boolean = false;
 
   constructor() {
     this.state = {
@@ -32,9 +36,20 @@ export class GameEngine {
       signalEscapedCount: 0,
       totalEscapedCount: 0,
       signalWindowRemaining: 0,
-      nextSignalIn: 15,
+      nextSignalIn: 14,
       announcementText: '10 PRISONERS ENTERING THE PIT...',
-      ladder: { ...LADDER_ZONE },
+      hatch: { ...HATCH_ZONE },
+      rope: {
+        id: 'main_rope',
+        x: 450,
+        y: FLOOR_Y,
+        vx: 0,
+        vy: 0,
+        state: 'ON_FLOOR',
+        heldByPlayerId: null,
+        attachedPlayerId: null,
+        length: 220
+      },
       players: [],
       projectiles: [],
       recentShots: [],
@@ -43,7 +58,7 @@ export class GameEngine {
   }
 
   public startNewMatch(): void {
-    this.matchTimer = 600; // 10 minutes
+    this.matchTimer = 600;
     this.finalSilenceActive = false;
     this.state.phase = 'WAITING_SIGNAL';
     this.state.totalEscapedCount = 0;
@@ -53,28 +68,40 @@ export class GameEngine {
     this.state.recentShots = [];
     this.soundEventsQueue = [];
 
-    // Schedule first signal between 12 and 20 seconds
-    this.nextSignalTimer = 14 + Math.random() * 8;
-    this.state.announcementText = 'ANONYMOUS GUARDS THE HATCH. SURVIVE 10 MINUTES IN THE CELL.';
+    // Reset rope onto concrete floor
+    this.state.rope = {
+      id: 'main_rope',
+      x: 450,
+      y: FLOOR_Y,
+      vx: 0,
+      vy: 0,
+      state: 'ON_FLOOR',
+      heldByPlayerId: null,
+      attachedPlayerId: null,
+      length: 220
+    };
 
+    this.nextSignalTimer = 14 + Math.random() * 8;
+    this.state.announcementText = 'ANONYMOUS GUARDS THE UPPER HATCH. SURVIVE 10 MINUTES IN THE CELL.';
     this.soundEventsQueue.push({ type: 'CLANG' });
 
-    // Spawn 10 players into the cell
+    // Spawn players along the floor
     this.state.players.forEach((p, idx) => {
-      p.x = 200 + Math.random() * 600;
-      p.y = 420 + Math.random() * 220;
+      p.x = 180 + idx * 65;
+      p.y = FLOOR_Y;
       p.vx = 0;
       p.vy = 0;
+      p.facing = 'RIGHT';
       p.health = 100;
       p.stamina = 100;
-      p.state = 'IDLE';
+      p.state = 'ON_FLOOR';
+      p.isGrounded = true;
       p.stunnedTimer = 0;
       p.tackleCooldown = 0;
       p.attackCooldown = 0;
-      p.climbProgress = 0;
       p.hasEscaped = false;
       p.escapeTime = undefined;
-      p.rocks = 2;
+      p.rocks = 1;
     });
   }
 
@@ -86,20 +113,21 @@ export class GameEngine {
       id,
       name: name || 'You',
       isBot: false,
-      x: 500,
-      y: 550,
+      x: 350,
+      y: FLOOR_Y,
       vx: 0,
       vy: 0,
-      angle: -Math.PI / 2,
-      color: '#00ffcc',
+      facing: 'RIGHT',
+      angle: 0,
+      color: '#22d3ee', // Cyan tint for human player
       health: 100,
       stamina: 100,
-      state: 'IDLE',
+      state: 'ON_FLOOR',
+      isGrounded: true,
       stunnedTimer: 0,
       tackleCooldown: 0,
       attackCooldown: 0,
-      climbProgress: 0,
-      rocks: 2,
+      rocks: 1,
       hasEscaped: false,
       sabotages: 0
     };
@@ -109,6 +137,12 @@ export class GameEngine {
   }
 
   public removePlayer(id: string): void {
+    if (this.state.rope.heldByPlayerId === id) {
+      this.dropRope();
+    }
+    if (this.state.rope.attachedPlayerId === id) {
+      this.dropRope();
+    }
     this.state.players = this.state.players.filter(p => p.id !== id);
   }
 
@@ -121,20 +155,21 @@ export class GameEngine {
         id: `bot_${Date.now()}_${botIdx}`,
         name,
         isBot: true,
-        x: 200 + Math.random() * 600,
-        y: 420 + Math.random() * 220,
+        x: 180 + this.state.players.length * 65,
+        y: FLOOR_Y,
         vx: 0,
         vy: 0,
-        angle: -Math.PI / 2,
+        facing: 'RIGHT',
+        angle: 0,
         color,
         health: 100,
         stamina: 100,
-        state: 'IDLE',
+        state: 'ON_FLOOR',
+        isGrounded: true,
         stunnedTimer: 0,
         tackleCooldown: 0,
         attackCooldown: 0,
-        climbProgress: 0,
-        rocks: 2,
+        rocks: 1,
         hasEscaped: false,
         sabotages: 0
       });
@@ -144,59 +179,171 @@ export class GameEngine {
 
   public handleInput(playerId: string, input: ClientInput): void {
     const p = this.state.players.find(x => x.id === playerId);
-    if (!p || p.state === 'DEAD' || p.state === 'ESCAPED') return;
+    if (!p || p.state === 'DEAD' || p.hasEscaped) return;
 
     p.angle = input.aimAngle;
     if (p.stunnedTimer > 0) return;
 
-    const speed = p.state === 'CLIMBING' ? 45 : 170;
-    let dx = 0;
-    let dy = 0;
-    if (input.left) dx -= 1;
-    if (input.right) dx += 1;
-    if (input.up) dy -= 1;
-    if (input.down) dy += 1;
+    // Movement logic depending on current physical state
+    if (p.state === 'ON_FLOOR') {
+      const runSpeed = 190;
+      if (input.left) {
+        p.vx = -runSpeed;
+        p.facing = 'LEFT';
+      } else if (input.right) {
+        p.vx = runSpeed;
+        p.facing = 'RIGHT';
+      } else {
+        p.vx = 0;
+      }
 
-    if (dx !== 0 && dy !== 0) {
-      dx *= 0.7071;
-      dy *= 0.7071;
-    }
+      // Jump
+      if (input.jump && p.isGrounded) {
+        p.vy = -340;
+        p.isGrounded = false;
+        p.state = 'FALLING';
+      }
 
-    if (p.state !== 'TACKLING') {
-      p.vx = dx * speed;
-      p.vy = dy * speed;
-      if (p.state !== 'CLIMBING') {
-        p.state = (dx !== 0 || dy !== 0) ? 'RUNNING' : 'IDLE';
+      // Grab Vertical Wall Pipe on right
+      if (Math.abs(p.x - V_PIPE_X) < 35 && (input.up || input.right)) {
+        p.state = 'CLIMBING_V_PIPE';
+        p.x = V_PIPE_X;
+        p.vx = 0;
+        p.vy = 0;
+        p.isGrounded = false;
+      }
+
+      // Tackle lunge on floor
+      if (input.tackle && p.tackleCooldown <= 0 && p.stamina >= 25) {
+        p.stamina -= 25;
+        p.tackleCooldown = 1.8;
+        p.stunnedTimer = 0.3;
+        const dir = p.facing === 'RIGHT' ? 1 : -1;
+        p.vx = dir * 380;
+        this.soundEventsQueue.push({ type: 'TACKLE', x: p.x, y: p.y });
+      }
+
+      // Pick up rope from floor
+      if (input.interact && this.state.rope.state === 'ON_FLOOR') {
+        const distToRope = Math.hypot(p.x - this.state.rope.x, p.y - this.state.rope.y);
+        if (distToRope < 50) {
+          this.state.rope.state = 'HELD';
+          this.state.rope.heldByPlayerId = p.id;
+          this.state.rope.attachedPlayerId = null;
+        }
+      }
+    } else if (p.state === 'CLIMBING_V_PIPE') {
+      p.x = V_PIPE_X;
+      p.vx = 0;
+      const climbSpeed = 115;
+
+      if (input.up) {
+        p.vy = -climbSpeed;
+      } else if (input.down) {
+        p.vy = climbSpeed;
+      } else {
+        p.vy = 0;
+      }
+
+      // Drop off vertical pipe
+      if (input.left) {
+        p.state = 'FALLING';
+        p.vx = -120;
+      }
+
+      // Transition to ceiling horizontal pipe at the top
+      if (p.y <= V_PIPE_TOP_Y + 15) {
+        p.state = 'HANGING_H_PIPE';
+        p.y = H_PIPE_Y + 15;
+        p.vy = 0;
+      }
+
+      // Touch floor again
+      if (p.y >= FLOOR_Y) {
+        p.y = FLOOR_Y;
+        p.state = 'ON_FLOOR';
+        p.isGrounded = true;
+      }
+    } else if (p.state === 'HANGING_H_PIPE') {
+      p.y = H_PIPE_Y + 15; // Hanging below pipe
+      p.vy = 0;
+      const traverseSpeed = 100;
+
+      if (input.left) {
+        p.vx = -traverseSpeed;
+        p.facing = 'LEFT';
+      } else if (input.right) {
+        p.vx = traverseSpeed;
+        p.facing = 'RIGHT';
+      } else {
+        p.vx = 0;
+      }
+
+      // Let go and drop down
+      if (input.down) {
+        p.state = 'FALLING';
+        p.vy = 50;
+      }
+
+      // Reached escape opening at upper-left!
+      if (p.x <= H_PIPE_EXIT_X) {
+        this.attemptEscape(p);
+      }
+    } else if (p.state === 'FALLING') {
+      // In air - allow slight air steering
+      if (input.left) p.vx = Math.max(-120, p.vx - 10);
+      if (input.right) p.vx = Math.min(120, p.vx + 10);
+
+      // Can grab vertical pipe in mid-air
+      if (Math.abs(p.x - V_PIPE_X) < 25 && p.y < FLOOR_Y - 20) {
+        p.state = 'CLIMBING_V_PIPE';
+        p.x = V_PIPE_X;
+        p.vx = 0;
+        p.vy = 0;
       }
     }
 
-    // Throw rock
-    if (input.attack && p.attackCooldown <= 0 && p.rocks > 0) {
-      p.rocks--;
-      p.attackCooldown = 0.8;
-      const rockSpeed = 380;
-      this.state.projectiles.push({
-        id: `proj_${Date.now()}_${Math.random()}`,
-        ownerId: p.id,
-        x: p.x + Math.cos(p.angle) * 22,
-        y: p.y + Math.sin(p.angle) * 22,
-        vx: Math.cos(p.angle) * rockSpeed,
-        vy: Math.sin(p.angle) * rockSpeed,
-        type: 'rock',
-        lifetime: 1.5
-      });
-    }
+    // ROPE ACTIONS: Throw rope or Pull attached rope
+    if (this.state.rope.heldByPlayerId === p.id) {
+      if (this.state.rope.state === 'HELD') {
+        // Throw rope toward climbers
+        if (input.attack && p.attackCooldown <= 0) {
+          p.attackCooldown = 1.0;
+          this.state.rope.state = 'THROWN';
+          this.state.rope.x = p.x;
+          this.state.rope.y = p.y - 20;
+          const throwSpeed = 460;
+          this.state.rope.vx = Math.cos(p.angle) * throwSpeed;
+          this.state.rope.vy = Math.sin(p.angle) * throwSpeed;
+        }
 
-    // Tackle dash
-    if (input.tackle && p.tackleCooldown <= 0 && p.stamina >= 30 && p.state !== 'CLIMBING') {
-      p.stamina -= 30;
-      p.tackleCooldown = 2.0;
-      p.state = 'TACKLING';
-      p.stunnedTimer = 0.35;
-      const tackleSpeed = 420;
-      p.vx = Math.cos(p.angle) * tackleSpeed;
-      p.vy = Math.sin(p.angle) * tackleSpeed;
-      this.soundEventsQueue.push({ type: 'TACKLE', x: p.x, y: p.y });
+        // Drop rope
+        if (input.interact) {
+          this.dropRope();
+        }
+      } else if (this.state.rope.state === 'ATTACHED') {
+        // Yank / Pull victim off the pipe!
+        if (input.tackle || input.attack) {
+          this.pullRopeTarget(p);
+        }
+      }
+    } else {
+      // Throw basic rock if we have one and not holding rope
+      if (input.attack && p.attackCooldown <= 0 && p.rocks > 0) {
+        p.rocks--;
+        p.attackCooldown = 0.8;
+        const rockSpeed = 420;
+        this.state.projectiles.push({
+          id: `rock_${Date.now()}_${Math.random()}`,
+          ownerId: p.id,
+          x: p.x + (p.facing === 'RIGHT' ? 15 : -15),
+          y: p.y - 18,
+          vx: Math.cos(p.angle) * rockSpeed,
+          vy: Math.sin(p.angle) * rockSpeed,
+          type: 'rock',
+          lifetime: 1.6
+        });
+      }
     }
   }
 
@@ -212,73 +359,65 @@ export class GameEngine {
       return;
     }
 
-    // Count down the global 10-minute match timer
+    // 10-Minute Match Clock
     if (this.state.phase !== 'MATCH_OVER' && this.state.phase !== 'PURGE') {
       this.matchTimer -= DT;
       this.state.matchTimer = Math.max(0, Math.ceil(this.matchTimer));
-
       if (this.matchTimer <= 0) {
         this.triggerFinalPurge();
         return;
       }
     }
 
-    // Phase handling
+    // Phase management
     if (this.state.phase === 'WAITING_SIGNAL') {
       this.updateWaitingPhase();
     } else if (this.state.phase === 'SIGNAL_ACTIVE') {
       this.updateSignalActivePhase();
     } else if (this.state.phase === 'PURGE') {
-      // 5 seconds of final purge animation before match over
       this.signalWindowTimer -= DT;
       if (this.signalWindowTimer <= 0) {
         this.state.phase = 'MATCH_OVER';
       }
     }
 
-    // Update projectiles & general movement
+    // Physics updates
+    this.updateRopePhysics();
     this.updateProjectiles();
-    this.updateLivingPlayers();
+    this.updatePlayersPhysics();
 
     this.state.soundEvents = [...this.soundEventsQueue];
   }
 
   private updateWaitingPhase(): void {
-    // Count down to next signal
     this.nextSignalTimer -= DT;
     this.state.nextSignalIn = Math.max(0, Math.ceil(this.nextSignalTimer));
 
-    // Check if remaining living prisoners in cell
-    const prisonersInPit = this.state.players.filter(p => !p.hasEscaped && p.state !== 'DEAD');
-    if (prisonersInPit.length === 0) {
-      // Everyone either escaped or died
+    const livingInPit = this.state.players.filter(p => !p.hasEscaped && p.state !== 'DEAD');
+    if (livingInPit.length === 0) {
       this.state.phase = 'MATCH_OVER';
       this.state.announcementText = 'ALL PRISONERS HAVE EITHER ESCAPED OR PERISHED.';
       return;
     }
 
     if (this.nextSignalTimer <= 0) {
-      // Chance of final silence or trigger new signal
-      const roll = Math.random();
-      // If 8+ minutes passed and only 1-2 prisoners left, Anonymous might stop speaking
-      if (this.matchTimer < 120 && roll < 0.25) {
+      if (this.matchTimer < 120 && Math.random() < 0.25) {
         this.finalSilenceActive = true;
-        this.state.announcementText = 'ANONYMOUS IS GONE. THE HATCH REMAINS COLD AND DEAD...';
+        this.state.announcementText = 'ANONYMOUS IS GONE. THE HATCH REMAINS COLD AND SEALED...';
         this.nextSignalTimer = 999;
         return;
       }
 
-      // Trigger a signal!
-      // Anonymous chooses quota: usually 1, sometimes 2 (if multiple people left)
-      this.state.signalQuota = (prisonersInPit.length > 2 && Math.random() < 0.35) ? 2 : 1;
+      // Anonymous signals quota
+      this.state.signalQuota = (livingInPit.length > 2 && Math.random() < 0.35) ? 2 : 1;
       this.state.signalEscapedCount = 0;
-      this.signalWindowTimer = 16.0; // 16-second window to reach ladder
-      this.state.signalWindowRemaining = 16;
+      this.signalWindowTimer = 18.0;
+      this.state.signalWindowRemaining = 18;
       this.state.phase = 'SIGNAL_ACTIVE';
 
       this.state.announcementText = this.state.signalQuota === 1
-        ? 'ANONYMOUS: "I WILL TAKE 1 PRISONER. IF TWO TOUCH THE LADDER, I SHOOT."'
-        : 'ANONYMOUS: "I GRANT PASSAGE FOR 2. FIGHT FOR IT."';
+        ? 'ANONYMOUS: "I WILL TAKE 1 PRISONER. IF TWO TOUCH THE HATCH, I FIRE."'
+        : 'ANONYMOUS: "I PERMIT 2 PRISONERS. CLIMB THE PIPE AND ESCAPE."';
 
       this.soundEventsQueue.push({ type: 'ANNOUNCEMENT' });
       this.soundEventsQueue.push({ type: 'CLANG' });
@@ -289,85 +428,256 @@ export class GameEngine {
     this.signalWindowTimer -= DT;
     this.state.signalWindowRemaining = Math.max(0, Math.ceil(this.signalWindowTimer));
 
-    const activeClimbers: Player[] = [];
-    const allowedRemaining = this.state.signalQuota - this.state.signalEscapedCount;
-
-    for (const p of this.state.players) {
-      if (p.hasEscaped || p.state === 'DEAD') continue;
-
-      const onLadder = (
-        p.x >= this.state.ladder.x &&
-        p.x <= this.state.ladder.x + this.state.ladder.width &&
-        p.y >= this.state.ladder.y &&
-        p.y <= this.state.ladder.y + this.state.ladder.height
-      );
-
-      if (onLadder && p.state !== 'STUNNED' && p.stunnedTimer <= 0) {
-        p.state = 'CLIMBING';
-        activeClimbers.push(p);
-
-        p.climbProgress = Math.min(100, p.climbProgress + (42 * DT));
-        p.y = Math.max(this.state.ladder.y + 15, p.y - 20 * DT);
-
-        // Escape success!
-        if (p.climbProgress >= 100) {
-          p.state = 'ESCAPED';
-          p.hasEscaped = true;
-          // Format escape timestamp
-          const mins = Math.floor((600 - this.matchTimer) / 60);
-          const secs = Math.floor((600 - this.matchTimer) % 60);
-          p.escapeTime = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-
-          this.state.signalEscapedCount++;
-          this.state.totalEscapedCount++;
-          this.soundEventsQueue.push({ type: 'ESCAPE', x: p.x, y: p.y });
-
-          // If quota reached, close the hatch immediately!
-          if (this.state.signalEscapedCount >= this.state.signalQuota) {
-            this.closeHatchAndReturnToSilence('QUOTA_FILLED');
-            return;
-          }
-        }
-      } else if (!onLadder && p.state === 'CLIMBING') {
-        p.state = 'IDLE';
-        p.climbProgress = 0;
-      }
-    }
-
-    // Quota violation: if more people on ladder than allowed, Anonymous executes the lower climber!
-    if (activeClimbers.length > allowedRemaining && allowedRemaining > 0) {
-      activeClimbers.sort((a, b) => a.climbProgress - b.climbProgress);
-      const violator = activeClimbers[0];
-      this.snipePlayer(violator, 'QUOTA_VIOLATED');
-    }
-
-    // Window closed due to time expiring
     if (this.signalWindowTimer <= 0) {
-      this.closeHatchAndReturnToSilence('WINDOW_EXPIRED');
+      this.closeHatch('WINDOW_EXPIRED');
     }
   }
 
-  private closeHatchAndReturnToSilence(reason: 'QUOTA_FILLED' | 'WINDOW_EXPIRED'): void {
-    this.soundEventsQueue.push({ type: 'CLANG' });
+  private attemptEscape(player: Player): void {
+    if (player.hasEscaped || player.state === 'DEAD') return;
 
-    // Reset anyone still on the ladder
-    for (const p of this.state.players) {
-      if (p.state === 'CLIMBING') {
-        p.state = 'IDLE';
-        p.climbProgress = 0;
-        p.y += 35; // Drop back into pit
-      }
+    // Quota Enforcement: if hatch is closed or quota full, Overseer snipes!
+    if (this.state.phase !== 'SIGNAL_ACTIVE') {
+      this.snipePlayer(player, 'QUOTA_VIOLATED');
+      return;
     }
 
+    const allowedRemaining = this.state.signalQuota - this.state.signalEscapedCount;
+    if (allowedRemaining <= 0) {
+      this.snipePlayer(player, 'QUOTA_VIOLATED');
+      return;
+    }
+
+    // Check if another player is also touching the hatch area right now
+    const otherClimbersAtHatch = this.state.players.filter(p => 
+      p.id !== player.id && 
+      p.state === 'HANGING_H_PIPE' && 
+      p.x <= H_PIPE_EXIT_X + 25 && 
+      !p.hasEscaped
+    );
+
+    if (allowedRemaining === 1 && otherClimbersAtHatch.length > 0) {
+      // 2 people touched at once! Shoot the one behind!
+      const violator = otherClimbersAtHatch[0].x > player.x ? otherClimbersAtHatch[0] : player;
+      this.snipePlayer(violator, 'QUOTA_VIOLATED');
+      if (violator.id === player.id) return;
+    }
+
+    // Success! Escape through hatch
+    player.hasEscaped = true;
+    player.state = 'ESCAPED';
+    const mins = Math.floor((600 - this.matchTimer) / 60);
+    const secs = Math.floor((600 - this.matchTimer) % 60);
+    player.escapeTime = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+
+    this.state.signalEscapedCount++;
+    this.state.totalEscapedCount++;
+    this.soundEventsQueue.push({ type: 'ESCAPE', x: player.x, y: player.y });
+
+    // Drop rope if escaping player held it
+    if (this.state.rope.heldByPlayerId === player.id || this.state.rope.attachedPlayerId === player.id) {
+      this.dropRope();
+    }
+
+    if (this.state.signalEscapedCount >= this.state.signalQuota) {
+      this.closeHatch('QUOTA_FILLED');
+    }
+  }
+
+  private closeHatch(reason: 'QUOTA_FILLED' | 'WINDOW_EXPIRED'): void {
+    this.soundEventsQueue.push({ type: 'CLANG' });
     this.state.phase = 'WAITING_SIGNAL';
-    // Random wait before Anonymous might speak again (between 18 and 35 seconds)
-    this.nextSignalTimer = 18 + Math.random() * 17;
+    this.nextSignalTimer = 18 + Math.random() * 16;
 
     const remaining = this.state.players.filter(p => !p.hasEscaped && p.state !== 'DEAD').length;
     if (reason === 'QUOTA_FILLED') {
-      this.state.announcementText = `HATCH SLAMS SHUT! ${remaining} PRISONERS REMAIN TRAPPED IN SILENCE...`;
+      this.state.announcementText = `HATCH SLAMS SHUT! ${remaining} PRISONERS REMAIN TRAPPED IN THE PIT.`;
     } else {
       this.state.announcementText = `ANONYMOUS WITHDREW: "TOO SLOW." HATCH SEALED. (${remaining} LEFT)`;
+    }
+  }
+
+  private updateRopePhysics(): void {
+    const rope = this.state.rope;
+
+    if (rope.state === 'HELD') {
+      const holder = this.state.players.find(p => p.id === rope.heldByPlayerId);
+      if (!holder || holder.state === 'DEAD' || holder.hasEscaped) {
+        this.dropRope();
+      } else {
+        rope.x = holder.x;
+        rope.y = holder.y - 15;
+      }
+    } else if (rope.state === 'THROWN') {
+      rope.x += rope.vx * DT;
+      rope.y += rope.vy * DT;
+      rope.vy += 320 * DT; // Slight gravity on thrown rope
+
+      // Check collision with hanging / climbing players
+      for (const p of this.state.players) {
+        if (p.id === rope.heldByPlayerId || p.state === 'DEAD' || p.hasEscaped) continue;
+        const dist = Math.hypot(p.x - rope.x, p.y - rope.y);
+        if (dist < 35 && (p.state === 'CLIMBING_V_PIPE' || p.state === 'HANGING_H_PIPE' || p.state === 'FALLING')) {
+          // Attached to victim!
+          rope.state = 'ATTACHED';
+          rope.attachedPlayerId = p.id;
+          rope.x = p.x;
+          rope.y = p.y;
+          this.soundEventsQueue.push({ type: 'ROPE_ATTACH', x: p.x, y: p.y });
+          break;
+        }
+      }
+
+      // Hit wall or floor without catching anyone
+      if (rope.y >= FLOOR_Y || rope.x < 30 || rope.x > CHAMBER_WIDTH - 30) {
+        this.dropRope();
+      }
+    } else if (rope.state === 'ATTACHED') {
+      const holder = this.state.players.find(p => p.id === rope.heldByPlayerId);
+      const target = this.state.players.find(p => p.id === rope.attachedPlayerId);
+
+      if (!holder || !target || holder.state === 'DEAD' || target.state === 'DEAD' || target.hasEscaped) {
+        this.dropRope();
+      } else {
+        rope.x = target.x;
+        rope.y = target.y;
+
+        // Auto-pull if holder moves far away
+        const dist = Math.hypot(target.x - holder.x, target.y - holder.y);
+        if (dist > rope.length) {
+          this.pullRopeTarget(holder);
+        }
+      }
+    }
+  }
+
+  private pullRopeTarget(holder: Player): void {
+    const rope = this.state.rope;
+    const target = this.state.players.find(p => p.id === rope.attachedPlayerId);
+    if (!target) return;
+
+    // Pull victim off pipe violently down toward floor!
+    target.state = 'FALLING';
+    target.stunnedTimer = 1.8;
+    target.vy = 420; // Jerk downward
+    target.vx = (holder.x - target.x) * 0.4;
+    target.health = Math.max(0, target.health - 20);
+
+    holder.sabotages++;
+    this.soundEventsQueue.push({ type: 'ROPE_PULL', x: target.x, y: target.y });
+    this.soundEventsQueue.push({ type: 'FALL_IMPACT', x: target.x, y: target.y });
+
+    // Release rope back to floor
+    this.dropRope();
+  }
+
+  private dropRope(): void {
+    const rope = this.state.rope;
+    rope.state = 'ON_FLOOR';
+    rope.heldByPlayerId = null;
+    rope.attachedPlayerId = null;
+    rope.vx = 0;
+    rope.vy = 0;
+    rope.y = FLOOR_Y;
+    rope.x = Math.max(100, Math.min(850, rope.x));
+  }
+
+  private updateProjectiles(): void {
+    for (let i = this.state.projectiles.length - 1; i >= 0; i--) {
+      const proj = this.state.projectiles[i];
+      proj.x += proj.vx * DT;
+      proj.y += proj.vy * DT;
+      proj.vy += 300 * DT; // Gravity on rock
+      proj.lifetime -= DT;
+
+      let hit = false;
+      for (const p of this.state.players) {
+        if (p.id === proj.ownerId || p.state === 'DEAD' || p.hasEscaped) continue;
+        const dist = Math.hypot(p.x - proj.x, p.y - proj.y);
+        if (dist < 26) {
+          hit = true;
+          p.health = Math.max(0, p.health - 25);
+          p.stunnedTimer = 1.5;
+
+          // If on vertical or ceiling pipe, rock knocks them off!
+          if (p.state === 'CLIMBING_V_PIPE' || p.state === 'HANGING_H_PIPE') {
+            p.state = 'FALLING';
+            p.vy = 180;
+          }
+
+          const thrower = this.state.players.find(x => x.id === proj.ownerId);
+          if (thrower) thrower.sabotages++;
+
+          this.soundEventsQueue.push({ type: 'ROCK_HIT', x: p.x, y: p.y });
+          break;
+        }
+      }
+
+      if (hit || proj.lifetime <= 0 || proj.y >= FLOOR_Y || proj.x < 30 || proj.x > CHAMBER_WIDTH - 30) {
+        this.state.projectiles.splice(i, 1);
+      }
+    }
+  }
+
+  private updatePlayersPhysics(): void {
+    for (const p of this.state.players) {
+      if (p.state === 'DEAD' || p.hasEscaped) continue;
+
+      if (p.stamina < 100) p.stamina = Math.min(100, p.stamina + 20 * DT);
+      if (p.tackleCooldown > 0) p.tackleCooldown -= DT;
+      if (p.attackCooldown > 0) p.attackCooldown -= DT;
+
+      if (p.stunnedTimer > 0) {
+        p.stunnedTimer -= DT;
+        if (p.stunnedTimer <= 0 && p.isGrounded) {
+          p.state = 'ON_FLOOR';
+        }
+      }
+
+      // Falling physics
+      if (p.state === 'FALLING') {
+        p.vy += GRAVITY * DT;
+        p.x += p.vx * DT;
+        p.y += p.vy * DT;
+
+        // Ground collision
+        if (p.y >= FLOOR_Y) {
+          p.y = FLOOR_Y;
+          p.vy = 0;
+          p.vx = 0;
+          p.isGrounded = true;
+          p.state = p.stunnedTimer > 0 ? 'STUNNED' : 'ON_FLOOR';
+          this.soundEventsQueue.push({ type: 'FALL_IMPACT', x: p.x, y: p.y });
+        }
+      } else if (p.state === 'ON_FLOOR') {
+        p.x += p.vx * DT;
+        p.y = FLOOR_Y;
+      } else if (p.state === 'CLIMBING_V_PIPE') {
+        p.y += p.vy * DT;
+        p.x = V_PIPE_X;
+      } else if (p.state === 'HANGING_H_PIPE') {
+        p.x += p.vx * DT;
+        p.y = H_PIPE_Y + 15;
+      }
+
+      // Chamber side bounds
+      p.x = Math.max(50, Math.min(CHAMBER_WIDTH - 50, p.x));
+
+      // Melee / Tackle collision between players on floor
+      if (p.stunnedTimer > 0 && p.vx !== 0 && p.state === 'ON_FLOOR') {
+        for (const other of this.state.players) {
+          if (other.id === p.id || other.state === 'DEAD' || other.hasEscaped) continue;
+          const dist = Math.hypot(other.x - p.x, other.y - p.y);
+          if (dist < 32 && other.state === 'ON_FLOOR') {
+            other.health = Math.max(0, other.health - 20);
+            other.stunnedTimer = 1.2;
+            other.state = 'STUNNED';
+            other.vx = (p.facing === 'RIGHT' ? 1 : -1) * 220;
+            p.sabotages++;
+            this.soundEventsQueue.push({ type: 'TACKLE', x: other.x, y: other.y });
+          }
+        }
+      }
     }
   }
 
@@ -377,7 +687,6 @@ export class GameEngine {
     this.state.announcementText = 'OVERSEER: "10 MINUTES HAVE ELAPSED. PURGE THE PIT! NO SURVIVORS!"';
     this.soundEventsQueue.push({ type: 'CRASH' });
 
-    // Execute everyone remaining in the pit
     for (const p of this.state.players) {
       if (!p.hasEscaped && p.state !== 'DEAD') {
         this.snipePlayer(p, 'CRASH_PURGE');
@@ -390,13 +699,13 @@ export class GameEngine {
 
     player.health = 0;
     player.state = 'DEAD';
-    player.climbProgress = 0;
+    player.vy = 400; // Drop dead to floor
 
     this.state.recentShots.push({
       id: `shot_${Date.now()}_${Math.random()}`,
       targetId: player.id,
-      fromX: this.state.ladder.x + this.state.ladder.width / 2,
-      fromY: 10,
+      fromX: HATCH_ZONE.x + 30,
+      fromY: HATCH_ZONE.y + 40,
       toX: player.x,
       toY: player.y,
       reason,
@@ -404,84 +713,5 @@ export class GameEngine {
     });
 
     this.soundEventsQueue.push({ type: 'GUNSHOT', x: player.x, y: player.y });
-  }
-
-  private updateProjectiles(): void {
-    for (let i = this.state.projectiles.length - 1; i >= 0; i--) {
-      const proj = this.state.projectiles[i];
-      proj.x += proj.vx * DT;
-      proj.y += proj.vy * DT;
-      proj.lifetime -= DT;
-
-      let hit = false;
-      for (const p of this.state.players) {
-        if (p.id === proj.ownerId || p.state === 'DEAD' || p.hasEscaped) continue;
-        const dist = Math.hypot(p.x - proj.x, p.y - proj.y);
-        if (dist < 22) {
-          hit = true;
-          p.health = Math.max(0, p.health - 25);
-          p.stunnedTimer = 1.5;
-          p.climbProgress = 0;
-          p.state = 'STUNNED';
-          if (p.y < 120) p.y += 35;
-
-          const thrower = this.state.players.find(x => x.id === proj.ownerId);
-          if (thrower) thrower.sabotages++;
-
-          this.soundEventsQueue.push({ type: 'ROCK_HIT', x: p.x, y: p.y });
-          break;
-        }
-      }
-
-      if (hit || proj.lifetime <= 0 || proj.x < 30 || proj.x > ARENA_WIDTH - 30 || proj.y < 30 || proj.y > ARENA_HEIGHT - 30) {
-        this.state.projectiles.splice(i, 1);
-      }
-    }
-  }
-
-  private updateLivingPlayers(): void {
-    for (const p of this.state.players) {
-      if (p.state === 'DEAD' || p.hasEscaped) continue;
-
-      if (p.stamina < 100) p.stamina = Math.min(100, p.stamina + 20 * DT);
-      if (p.tackleCooldown > 0) p.tackleCooldown -= DT;
-      if (p.attackCooldown > 0) p.attackCooldown -= DT;
-
-      if (p.stunnedTimer > 0) {
-        p.stunnedTimer -= DT;
-        if (p.stunnedTimer <= 0) {
-          p.state = 'IDLE';
-        }
-      }
-
-      p.x += p.vx * DT;
-      p.y += p.vy * DT;
-
-      const margin = 35;
-      p.x = Math.max(margin, Math.min(ARENA_WIDTH - margin, p.x));
-      p.y = Math.max(margin, Math.min(ARENA_HEIGHT - margin, p.y));
-
-      // Tackle hit detection
-      if (p.state === 'TACKLING') {
-        for (const other of this.state.players) {
-          if (other.id === p.id || other.state === 'DEAD' || other.hasEscaped) continue;
-          const dist = Math.hypot(other.x - p.x, other.y - p.y);
-          if (dist < 32) {
-            other.health = Math.max(0, other.health - 20);
-            other.stunnedTimer = 1.3;
-            other.climbProgress = 0;
-            other.state = 'STUNNED';
-            p.sabotages++;
-
-            const angle = Math.atan2(other.y - p.y, other.x - p.x);
-            other.vx = Math.cos(angle) * 260;
-            other.vy = Math.sin(angle) * 260;
-            other.x += other.vx * 0.1;
-            other.y += other.vy * 0.1;
-            this.soundEventsQueue.push({ type: 'TACKLE', x: other.x, y: other.y });
-          }
-        }
-      }
-    }
   }
 }
