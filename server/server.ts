@@ -142,8 +142,16 @@ wss.on('connection', (ws: WebSocket) => {
           const existingPlayer = engine.state.players.find(p => p.id === session.playerId);
 
           if (isStillValid && existingPlayer) {
-            if (session.ws && session.ws !== ws && session.ws.readyState === WebSocket.OPEN) {
-              session.ws.close(1000, 'Reconnected from another window');
+            const oldWs = session.ws;
+            if (oldWs && oldWs !== ws) {
+              clients.delete(oldWs);
+              try {
+                if (oldWs.readyState === WebSocket.OPEN || oldWs.readyState === WebSocket.CONNECTING) {
+                  oldWs.close(1000, 'Reconnected from another window');
+                }
+              } catch {
+                // Ignore socket close error
+              }
             }
             session.ws = ws;
             session.disconnectTime = null;
@@ -236,21 +244,27 @@ wss.on('connection', (ws: WebSocket) => {
   });
 
   const handleDisconnect = () => {
-    const client = clients.get(ws);
-    if (client) {
-      clients.delete(ws);
-      const session = sessions.get(client.resumeToken);
-      if (session) {
-        session.ws = null;
-        session.disconnectTime = Date.now();
-      }
-      engine.removePlayer(client.playerId, false);
-    }
+    handleClientDisconnect(ws);
   };
 
   ws.on('close', handleDisconnect);
   ws.on('error', handleDisconnect);
 });
+
+export function handleClientDisconnect(ws: WebSocket, now: number = Date.now()): void {
+  const client = clients.get(ws);
+  if (client) {
+    clients.delete(ws);
+    const session = sessions.get(client.resumeToken);
+    if (session) {
+      if (session.ws === ws) {
+        session.ws = null;
+        session.disconnectTime = now;
+        engine.removePlayer(client.playerId, false);
+      }
+    }
+  }
+}
 
 // Periodic Session Expiry Cleanup (every 5 seconds)
 setInterval(() => {

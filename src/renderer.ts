@@ -681,7 +681,14 @@ export class GameRenderer {
         ctx.lineTo(holder.x, holder.y - 6);
         ctx.stroke();
 
-        if (holder.id === localPlayerId) {
+        const canThrowRope = holder.id === localPlayerId &&
+          holder.state !== 'DEAD' &&
+          holder.state !== 'STUNNED' &&
+          !holder.climbGrabbingId &&
+          !holder.grabbedByPlayerId &&
+          holder.attackCooldown <= 0;
+
+        if (canThrowRope) {
           // Draw aiming trajectory dotted line for local player
           const aimLen = rope.maxDistance || 280;
           const endAimX = handX + Math.cos(holder.angle) * aimLen;
@@ -708,6 +715,11 @@ export class GameRenderer {
           ctx.font = 'bold 10px monospace';
           ctx.textAlign = 'center';
           ctx.fillText('AIM: MOUSE | CLICK: THROW | [E] DROP', holder.x, holder.y - 44);
+        } else if (holder.id === localPlayerId) {
+          ctx.fillStyle = '#94a3b8';
+          ctx.font = 'bold 10px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('[E] DROP ROPE', holder.x, holder.y - 44);
         } else {
           ctx.fillStyle = '#fde047';
           ctx.font = 'bold 10px monospace';

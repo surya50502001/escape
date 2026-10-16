@@ -7,6 +7,7 @@ import { sound } from './audio.js';
 const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
 const audioBtn = document.getElementById('audioBtn') as HTMLButtonElement;
 const statusDiv = document.getElementById('status') as HTMLDivElement;
+const readyBtn = document.getElementById('readyBtn') as HTMLButtonElement | null;
 
 const joinOverlay = document.getElementById('joinOverlay') as HTMLDivElement;
 const joinForm = document.getElementById('joinForm') as HTMLFormElement;
@@ -43,6 +44,14 @@ audioBtn.addEventListener('click', () => {
   sound.enabled = !sound.enabled;
   audioBtn.textContent = sound.enabled ? '🔊 Audio: ON' : '🔇 Audio: OFF';
 });
+
+if (readyBtn) {
+  readyBtn.addEventListener('click', () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'READY' }));
+    }
+  });
+}
 
 function showError(message: string): void {
   joinError.textContent = message;
@@ -128,11 +137,22 @@ function connectToGame(name: string): void {
       } else if (data.type === 'SYNC') {
         latestState = data.state;
 
+        if (readyBtn) {
+          readyBtn.style.display = (latestState?.phase === 'LOBBY' && localPlayerId) ? 'inline-block' : 'none';
+        }
+        if (latestState?.phase === 'LOBBY' && localPlayerName) {
+          statusDiv.textContent = `PRISONER: ${localPlayerName} (LOBBY - ${latestState.players.length} JOINED)`;
+        } else if (localPlayerName) {
+          statusDiv.textContent = `PRISONER: ${localPlayerName}`;
+        }
+
         // Update local player position for mouse aiming reference
         const me = latestState?.players.find(p => p.id === localPlayerId);
         if (me) {
-          (window as unknown as { localPlayerX: number; localPlayerY: number }).localPlayerX = me.x;
-          (window as unknown as { localPlayerY: number }).localPlayerY = me.y;
+          (window as unknown as { localPlayerX: number; localPlayerY: number; isRopeAttachedToMe: boolean }).localPlayerX = me.x;
+          (window as unknown as { localPlayerY: number; isRopeAttachedToMe: boolean }).localPlayerY = me.y;
+          (window as unknown as { isRopeAttachedToMe: boolean }).isRopeAttachedToMe =
+            Boolean(latestState?.rope.state === 'ATTACHED' && latestState?.rope.heldByPlayerId === me.id);
         }
 
         // Handle Sound & Visual Events
@@ -242,7 +262,8 @@ joinForm.addEventListener('submit', (e) => {
 // Send player input loop (30 FPS)
 setInterval(() => {
   if (ws && ws.readyState === WebSocket.OPEN && localPlayerId) {
-    const currentInput = inputManager.poll();
+    const me = latestState?.players.find(p => p.id === localPlayerId);
+    const currentInput = inputManager.poll(me?.x, me?.y);
     ws.send(JSON.stringify({
       type: 'INPUT',
       input: currentInput

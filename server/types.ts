@@ -29,6 +29,7 @@ export interface Player {
   climbGrabbingId: string | null;
   grabbedByPlayerId: string | null;
   struggleMeter: number;
+  hazardCooldown: number;
 }
 
 export interface Rope {
@@ -45,6 +46,7 @@ export interface Rope {
   startX?: number;
   startY?: number;
   maxDistance?: number;
+  pullDamageCooldown?: number;
 }
 
 export type ObstacleType = 'SPIKES' | 'PLATFORM' | 'STEAM_VENT' | 'MOVING_BARRIER';
