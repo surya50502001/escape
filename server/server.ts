@@ -165,7 +165,8 @@ setInterval(() => {
   }
 }, TICK_INTERVAL_MS);
 
-const PORT = process.env.PORT || 3001;
-server.listen(PORT, () => {
-  console.log(`[The Pit Server] Running on http://localhost:${PORT}`);
+const PORT = Number(process.env.PORT) || 3001;
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`[The Pit Server] Local: http://localhost:${PORT}`);
+  console.log(`[The Pit Server] LAN:   http://192.168.0.6:${PORT}`);
 });
