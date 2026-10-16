@@ -66,6 +66,7 @@ export interface SoundEvent {
   y?: number;
 }
 
+export const MAX_PLAYERS = 10;
 export const CHAMBER_WIDTH = 1000;
 export const CHAMBER_HEIGHT = 700;
 export const FLOOR_Y = 620;
