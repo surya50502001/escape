@@ -1,0 +1,24 @@
+{
+  "name": "the-pit-multiplier-game",
+  "version": "1.0.0",
+  "description": "10-player prison break sabotage multiplier game",
+  "type": "module",
+  "scripts": {
+    "dev:server": "tsx watch server/server.ts",
+    "dev:client": "vite",
+    "build": "tsc && vite build",
+    "start": "tsx server/server.ts"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.1",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3"
+  }
+}
