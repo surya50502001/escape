@@ -23,37 +23,28 @@ describe('The Pit - Game Engine Audit & Unit Tests', () => {
 
   beforeEach(() => {
     engine = new GameEngine();
-    engine.ensureTenPlayers();
     engine.startNewMatch();
     engine.update(); // Flush initial CLANG sound event from match startup
   });
 
   // ========================================================
-  // 1. PLAYER CAPACITY & BOT REPLACEMENT POLICY
+  // 1. PLAYER CAPACITY & HUMAN-ONLY MULTIPLAYER
   // ========================================================
-  describe('Player Capacity & Bot Replacement Policy', () => {
-    it('should never exceed MAX_PLAYERS (10)', () => {
-      assert.equal(engine.state.players.length, MAX_PLAYERS);
+  describe('Player Capacity & Human-Only Multiplayer', () => {
+    it('should start with zero players and no NPCs', () => {
+      assert.equal(engine.state.players.length, 0);
+      assert.equal(engine.state.players.filter(p => p.isBot).length, 0);
     });
 
-    it('should replace an existing bot when a human joins at capacity', () => {
-      const initialBotCount = engine.state.players.filter(p => p.isBot).length;
-      assert.equal(initialBotCount, 10);
-
-      const human = engine.addHumanPlayer('human_1', 'Player 1');
-      assert.ok(human);
-      assert.equal(engine.state.players.length, MAX_PLAYERS);
-      assert.equal(engine.state.players.filter(p => !p.isBot).length, 1);
-      assert.equal(engine.state.players.filter(p => p.isBot).length, 9);
-    });
-
-    it('should allow up to 10 humans and reject the 11th human', () => {
+    it('should allow only humans who browse/connect to join up to MAX_PLAYERS (10)', () => {
       for (let i = 1; i <= 10; i++) {
         const h = engine.addHumanPlayer(`human_${i}`, `Player ${i}`);
         assert.ok(h, `Human ${i} should be accepted`);
+        assert.equal(h.isBot, false);
       }
       assert.equal(engine.state.players.length, MAX_PLAYERS);
       assert.equal(engine.state.players.filter(p => !p.isBot).length, 10);
+      assert.equal(engine.state.players.filter(p => p.isBot).length, 0);
 
       // 11th human must be rejected
       const excess = engine.addHumanPlayer('human_11', 'Excess Player');
@@ -64,10 +55,11 @@ describe('The Pit - Game Engine Audit & Unit Tests', () => {
     it('should safely reconnect existing player without consuming an extra slot', () => {
       const p1 = engine.addHumanPlayer('human_1', 'Player 1');
       assert.ok(p1);
+      assert.equal(engine.state.players.length, 1);
       const reconnected = engine.addHumanPlayer('human_1', 'Player 1 New Name');
       assert.equal(reconnected?.id, p1?.id);
       assert.equal(reconnected?.name, 'Player 1 New Name');
-      assert.equal(engine.state.players.length, MAX_PLAYERS);
+      assert.equal(engine.state.players.length, 1);
     });
   });
 
@@ -119,7 +111,7 @@ describe('The Pit - Game Engine Audit & Unit Tests', () => {
 
     it('should throw rope and attach to victim without auto-pulling', () => {
       const p1 = engine.addHumanPlayer('human_1', 'Thrower')!;
-      const victim = engine.state.players.find(p => p.id !== p1.id)!;
+      const victim = engine.addHumanPlayer('human_2', 'Victim')!;
 
       // Position victim climbing the vertical pipe
       victim.x = V_PIPE_X;
@@ -214,7 +206,7 @@ describe('The Pit - Game Engine Audit & Unit Tests', () => {
       engine.state.signalEscapedCount = 0;
 
       const escaper = engine.addHumanPlayer('human_1', 'Escaper')!;
-      const bystander = engine.state.players.find(p => p.id !== escaper.id)!;
+      const bystander = engine.addHumanPlayer('human_2', 'Bystander')!;
 
       // Bystander is traversing at x = 160 (nearby on pipe, but NOT in hatch threshold)
       bystander.x = 160;

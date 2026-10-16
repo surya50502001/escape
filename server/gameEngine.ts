@@ -9,14 +9,9 @@ const TICK_RATE = 30;
 const DT = 1 / TICK_RATE;
 const GRAVITY = 750;
 
-const BOT_NAMES = [
-  'Rusty Pete', 'Shiv Miller', 'Big Knuckles', 'Rat-Bite Sal', 
-  'Iron Jaw', 'Shadow Fox', 'One-Eye Jack', 'Snake Eyes', 'Mad Dog Boris'
-];
-
-const BOT_COLORS = [
-  '#c26d2e', '#964338', '#634766', '#3b5a7a', 
-  '#3f7065', '#997e36', '#854b24', '#3d6e52', '#7a3e5c'
+const HUMAN_COLORS = [
+  '#22d3ee', '#f97316', '#a855f7', '#22c55e', '#eab308', 
+  '#ec4899', '#3b82f6', '#14b8a6', '#f43f5e', '#84cc16'
 ];
 
 export class GameEngine {
@@ -36,7 +31,7 @@ export class GameEngine {
       totalEscapedCount: 0,
       signalWindowRemaining: 0,
       nextSignalIn: 14,
-      announcementText: '10 PRISONERS ENTERING THE PIT...',
+      announcementText: 'WAITING FOR PRISONERS TO JOIN VIA LINK...',
       hatch: { ...HATCH_ZONE },
       rope: {
         id: 'main_rope',
@@ -78,7 +73,7 @@ export class GameEngine {
     this.state.announcementText = 'ANONYMOUS GUARDS THE UPPER HATCH. SURVIVE 10 MINUTES IN THE CELL.';
     this.emitSound({ type: 'CLANG' });
 
-    // Spawn players along the floor
+    // Spawn connected human players along the floor
     this.state.players.forEach((p, idx) => {
       p.x = 180 + idx * 65;
       p.y = FLOOR_Y;
@@ -99,11 +94,8 @@ export class GameEngine {
   }
 
   /**
-   * Safe join policy:
-   * - Never exceeds MAX_PLAYERS (10).
-   * - Reconnecting with existing ID returns current player.
-   * - If room has bots, replace a bot.
-   * - If room is full of 10 humans, reject join by returning null.
+   * Only human players who open the link join the chamber.
+   * No NPCs / bots are created.
    */
   public addHumanPlayer(id: string, name: string): Player | null {
     // 1. Reconnect check
@@ -113,39 +105,22 @@ export class GameEngine {
       return existing;
     }
 
-    const humanCount = this.state.players.filter(p => !p.isBot).length;
-    if (humanCount >= MAX_PLAYERS) {
-      // All 10 slots occupied by human players
+    if (this.state.players.length >= MAX_PLAYERS) {
       return null;
     }
 
-    // 2. Bot replacement if room is at capacity
-    if (this.state.players.length >= MAX_PLAYERS) {
-      const botIndex = this.state.players.findIndex(p => p.isBot);
-      if (botIndex !== -1) {
-        const removedBot = this.state.players[botIndex];
-        // Clean up any rope references to this bot
-        if (this.state.rope.heldByPlayerId === removedBot.id || this.state.rope.attachedPlayerId === removedBot.id) {
-          this.dropRope();
-        }
-        this.state.players.splice(botIndex, 1);
-      } else {
-        return null;
-      }
-    }
-
-    // 3. Create human player
+    const color = HUMAN_COLORS[this.state.players.length % HUMAN_COLORS.length];
     const p: Player = {
       id,
-      name: name || 'You',
+      name: name || `Prisoner ${this.state.players.length + 1}`,
       isBot: false,
-      x: 350 + Math.random() * 200,
+      x: 180 + this.state.players.length * 65,
       y: FLOOR_Y,
       vx: 0,
       vy: 0,
       facing: 'RIGHT',
       angle: 0,
-      color: '#22d3ee', // Cyan tint for human player
+      color,
       health: 100,
       stamina: 100,
       state: 'ON_FLOOR',
@@ -159,7 +134,11 @@ export class GameEngine {
     };
 
     this.state.players.push(p);
-    this.ensureTenPlayers();
+
+    if (this.state.phase === 'LOBBY') {
+      this.startNewMatch();
+    }
+
     return p;
   }
 
@@ -173,45 +152,27 @@ export class GameEngine {
 
     if (this.state.phase === 'LOBBY' || this.state.phase === 'MATCH_OVER') {
       this.state.players = this.state.players.filter(p => p.id !== id);
-      this.ensureTenPlayers();
+      if (this.state.players.length === 0) {
+        this.state.phase = 'LOBBY';
+        this.state.announcementText = 'WAITING FOR PRISONERS TO JOIN VIA LINK...';
+      }
     } else {
-      // During active match, mark player as dead so slots and rankings remain stable
+      // During active match, mark player as dead
       if (!player.hasEscaped && player.state !== 'DEAD') {
         player.state = 'DEAD';
         player.health = 0;
+      }
+      // If no living prisoners remain in pit, reset to lobby when all disconnect
+      this.state.players = this.state.players.filter(p => p.id !== id);
+      if (this.state.players.length === 0) {
+        this.state.phase = 'LOBBY';
+        this.state.announcementText = 'WAITING FOR PRISONERS TO JOIN VIA LINK...';
       }
     }
   }
 
   public ensureTenPlayers(): void {
-    let botIdx = 0;
-    while (this.state.players.length < MAX_PLAYERS) {
-      const name = BOT_NAMES[botIdx % BOT_NAMES.length];
-      const color = BOT_COLORS[botIdx % BOT_COLORS.length];
-      this.state.players.push({
-        id: `bot_${Date.now()}_${botIdx}`,
-        name,
-        isBot: true,
-        x: 180 + this.state.players.length * 65,
-        y: FLOOR_Y,
-        vx: 0,
-        vy: 0,
-        facing: 'RIGHT',
-        angle: 0,
-        color,
-        health: 100,
-        stamina: 100,
-        state: 'ON_FLOOR',
-        isGrounded: true,
-        stunnedTimer: 0,
-        tackleCooldown: 0,
-        attackCooldown: 0,
-        rocks: 1,
-        hasEscaped: false,
-        sabotages: 0
-      });
-      botIdx++;
-    }
+    // Pure human multiplayer: No NPCs or bots
   }
 
   public handleInput(playerId: string, input: ClientInput): void {
@@ -413,8 +374,9 @@ export class GameEngine {
     this.state.recentShots = this.state.recentShots.filter(s => now - s.timestamp < 1000);
 
     if (this.state.phase === 'LOBBY') {
-      this.ensureTenPlayers();
-      this.startNewMatch();
+      if (this.state.players.length > 0) {
+        this.startNewMatch();
+      }
       this.flushSoundEvents();
       return;
     }
@@ -461,7 +423,7 @@ export class GameEngine {
     this.state.nextSignalIn = Math.max(0, Math.ceil(this.nextSignalTimer));
 
     const livingInPit = this.state.players.filter(p => !p.hasEscaped && p.state !== 'DEAD');
-    if (livingInPit.length === 0) {
+    if (this.state.players.length > 0 && livingInPit.length === 0) {
       this.state.phase = 'MATCH_OVER';
       this.state.announcementText = 'ALL PRISONERS HAVE EITHER ESCAPED OR PERISHED.';
       return;

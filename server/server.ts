@@ -4,7 +4,6 @@ import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GameEngine } from './gameEngine.js';
-import { BotController } from './botController.js';
 import { ClientInput } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -15,7 +14,6 @@ const server = createServer(app);
 const wss = new WebSocketServer({ server });
 
 const engine = new GameEngine();
-const botController = new BotController();
 
 // Serve static frontend build if available
 const distPath = path.join(__dirname, '../dist');
@@ -139,14 +137,6 @@ wss.on('connection', (ws: WebSocket) => {
 const TICK_INTERVAL_MS = 1000 / 30;
 
 setInterval(() => {
-  // Update Bot inputs
-  for (const p of engine.state.players) {
-    if (p.isBot) {
-      const botInput = botController.getBotInput(p, engine.state);
-      engine.handleInput(p.id, botInput);
-    }
-  }
-
   // Update Game State (advances physics, checks quota, flushes soundEvents)
   engine.update();
 
