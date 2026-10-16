@@ -759,14 +759,32 @@ export class GameRenderer {
 
     // 10-Minute Clock & Remaining Prisoners (Top Left)
     ctx.textAlign = 'left';
-    ctx.fillStyle = state.matchTimer < 120 ? '#ef4444' : '#f8fafc';
-    ctx.font = 'bold 20px monospace';
-    ctx.fillText(`⏱️ ${timeFormatted}`, 45, 115);
+    if (state.phase === 'LOBBY') {
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 18px monospace';
+      ctx.fillText(`LOBBY: ${state.players.length}/${state.maxPlayers || 10} PRISONERS`, 45, 115);
 
-    const livingInPit = state.players.filter(p => !p.hasEscaped && p.state !== 'DEAD').length;
-    ctx.fillStyle = '#38bdf8';
-    ctx.font = '12px monospace';
-    ctx.fillText(`PRISONERS TRAPPED: ${livingInPit}`, 45, 134);
+      const playerNames = state.players.map(p => p.name).join(', ');
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '11px monospace';
+      ctx.fillText(`CONNECTED: ${playerNames || 'None'}`, 45, 134);
+
+      if (state.lobbyCountdown > 0) {
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#22c55e';
+        ctx.font = 'bold 15px monospace';
+        ctx.fillText(`STARTING IN: ${state.lobbyCountdown}s`, this.width - 45, 115);
+      }
+    } else {
+      ctx.fillStyle = state.matchTimer < 120 ? '#ef4444' : '#f8fafc';
+      ctx.font = 'bold 20px monospace';
+      ctx.fillText(`⏱️ ${timeFormatted}`, 45, 115);
+
+      const livingInPit = state.players.filter(p => !p.hasEscaped && p.state !== 'DEAD').length;
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = '12px monospace';
+      ctx.fillText(`PRISONERS TRAPPED: ${livingInPit}`, 45, 134);
+    }
 
     // Local Player Status (Top Right)
     ctx.textAlign = 'right';

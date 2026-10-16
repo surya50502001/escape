@@ -84,6 +84,145 @@
       width: 100%;
       height: 100%;
     }
+
+    /* Join Game Overlay Modal */
+    .join-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(11, 12, 16, 0.94);
+      backdrop-filter: blur(8px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      transition: opacity 0.3s ease;
+    }
+    .join-overlay.hidden {
+      display: none;
+    }
+    .join-card {
+      width: 440px;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-top: 4px solid #e74c3c;
+      border-radius: 8px;
+      padding: 32px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.9), 0 0 20px rgba(231, 76, 60, 0.15);
+      text-align: center;
+    }
+    .join-title {
+      font-size: 32px;
+      font-weight: 900;
+      letter-spacing: 4px;
+      color: #f8fafc;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .join-subtitle {
+      font-size: 11px;
+      letter-spacing: 2px;
+      color: #e74c3c;
+      font-weight: 700;
+      font-family: monospace;
+      margin-bottom: 18px;
+    }
+    .join-desc {
+      font-size: 13px;
+      color: #94a3b8;
+      line-height: 1.5;
+      margin-bottom: 24px;
+    }
+    .input-group {
+      text-align: left;
+      margin-bottom: 18px;
+    }
+    .input-group label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      color: #cbd5e1;
+      margin-bottom: 6px;
+      font-family: monospace;
+    }
+    .join-input {
+      width: 100%;
+      background: #1e293b;
+      border: 1px solid #475569;
+      border-radius: 6px;
+      padding: 12px 14px;
+      color: #f8fafc;
+      font-size: 15px;
+      font-weight: 600;
+      font-family: monospace;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .join-input:focus {
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+    }
+    .join-input::placeholder {
+      color: #64748b;
+    }
+    .join-error {
+      background: rgba(231, 76, 60, 0.15);
+      border: 1px solid #e74c3c;
+      color: #fca5a5;
+      font-size: 12px;
+      font-family: monospace;
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      text-align: left;
+    }
+    .join-btn {
+      width: 100%;
+      background: #e74c3c;
+      color: #ffffff;
+      border: none;
+      padding: 12px;
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: 2px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .join-btn:hover:not(:disabled) {
+      background: #ff5252;
+    }
+    .join-btn:active:not(:disabled) {
+      transform: scale(0.99);
+    }
+    .join-btn:disabled {
+      background: #475569;
+      color: #94a3b8;
+      cursor: not-allowed;
+    }
+    .connecting-state {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 14px;
+      font-family: monospace;
+      font-size: 12px;
+      color: #38bdf8;
+    }
+    .spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(56, 189, 248, 0.2);
+      border-top-color: #38bdf8;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
     footer {
       width: 1000px;
       display: flex;
@@ -121,13 +260,49 @@
   <header>
     <h1>THE PIT <span class="badge">PRISON BREAK SURVIVAL</span></h1>
     <div class="top-controls">
-      <div id="status">CONNECTING...</div>
+      <div id="status">READY TO JOIN</div>
       <button id="audioBtn">🔊 Audio: ON</button>
     </div>
   </header>
 
   <div id="canvas-container">
     <canvas id="gameCanvas" width="1000" height="700"></canvas>
+
+    <!-- Join Game Screen Overlay -->
+    <div id="joinOverlay" class="join-overlay">
+      <div class="join-card">
+        <div class="join-title">THE PIT</div>
+        <div class="join-subtitle">UNDERGROUND MULTIPLAYER SURVIVAL</div>
+        <div class="join-desc">
+          10 human prisoners. One escape opening.<br/>
+          Climb the pipe, hang across the ceiling, or pull down your rivals.
+        </div>
+
+        <form id="joinForm">
+          <div class="input-group">
+            <label for="playerNameInput">PRISONER IDENTITY</label>
+            <input 
+              id="playerNameInput" 
+              class="join-input"
+              type="text" 
+              placeholder="Enter your name" 
+              maxlength="16" 
+              autocomplete="off" 
+              autofocus 
+            />
+          </div>
+
+          <div id="joinError" class="join-error" style="display: none;"></div>
+
+          <button id="joinBtn" type="submit" class="join-btn">JOIN GAME</button>
+
+          <div id="connectingState" class="connecting-state" style="display: none;">
+            <div class="spinner"></div>
+            <span id="connectingText">CONNECTING TO CELL...</span>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 
   <footer>
@@ -137,7 +312,7 @@
       <span><span class="key-badge">S</span> Drop Off Pipe</span>
       <span><span class="key-badge">E</span> Pick Up Rope</span>
       <span><span class="key-badge">CLICK</span> Throw Rope / Rock</span>
-      <span><span class="key-badge">SPACE</span> Yank Rope / Tackle</span>
+      <span><span class="key-badge">SPACE</span> Yank Rope / Tackle / Ready</span>
     </div>
     <div class="rule-hint">
       ⚠️ Route: Climb right wall pipe ➔ Traverse ceiling pipe ➔ Escape upper-left hatch!

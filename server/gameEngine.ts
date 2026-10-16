@@ -21,11 +21,14 @@ export class GameEngine {
   private nextSignalTimer: number = 14;
   private signalWindowTimer: number = 0;
   private finalSilenceActive: boolean = false;
+  private lobbyTimer: number = 15;
 
   constructor() {
     this.state = {
       phase: 'LOBBY',
       matchTimer: 600,
+      lobbyCountdown: 0,
+      maxPlayers: MAX_PLAYERS,
       signalQuota: 0,
       signalEscapedCount: 0,
       totalEscapedCount: 0,
@@ -114,7 +117,7 @@ export class GameEngine {
       id,
       name: name || `Prisoner ${this.state.players.length + 1}`,
       isBot: false,
-      x: 180 + this.state.players.length * 65,
+      x: 180 + (this.state.players.length * 65) % 650,
       y: FLOOR_Y,
       vx: 0,
       vy: 0,
@@ -135,39 +138,31 @@ export class GameEngine {
 
     this.state.players.push(p);
 
-    if (this.state.phase === 'LOBBY') {
-      this.startNewMatch();
-    }
-
+    // If joining during an active match or lobby, they enter safely without corrupting match state
     return p;
   }
 
-  public removePlayer(id: string): void {
+  public removePlayer(id: string, permanent: boolean = false): void {
     const player = this.state.players.find(p => p.id === id);
     if (!player) return;
 
+    // Immediately clear rope interactions so other players aren't stuck
     if (this.state.rope.heldByPlayerId === id || this.state.rope.attachedPlayerId === id) {
       this.dropRope();
     }
 
-    if (this.state.phase === 'LOBBY' || this.state.phase === 'MATCH_OVER') {
+    if (this.state.phase === 'LOBBY' || this.state.phase === 'MATCH_OVER' || permanent) {
       this.state.players = this.state.players.filter(p => p.id !== id);
       if (this.state.players.length === 0) {
         this.state.phase = 'LOBBY';
+        this.lobbyTimer = 15;
+        this.state.lobbyCountdown = 0;
         this.state.announcementText = 'WAITING FOR PRISONERS TO JOIN VIA LINK...';
       }
     } else {
-      // During active match, mark player as dead
-      if (!player.hasEscaped && player.state !== 'DEAD') {
-        player.state = 'DEAD';
-        player.health = 0;
-      }
-      // If no living prisoners remain in pit, reset to lobby when all disconnect
-      this.state.players = this.state.players.filter(p => p.id !== id);
-      if (this.state.players.length === 0) {
-        this.state.phase = 'LOBBY';
-        this.state.announcementText = 'WAITING FOR PRISONERS TO JOIN VIA LINK...';
-      }
+      // Temporary disconnect during active match: halt physics velocity but retain slot for reconnect
+      player.vx = 0;
+      player.vy = 0;
     }
   }
 
@@ -286,9 +281,9 @@ export class GameEngine {
         p.vy = 50;
       }
 
-      // Reached escape opening at upper-left
-      if (p.x <= H_PIPE_EXIT_X) {
-        this.attemptEscape(p);
+      // Reached escape opening at upper-left: clamp coordinate
+      if (p.x < 40) {
+        p.x = 40;
       }
     } else if (p.state === 'FALLING') {
       if (input.left) p.vx = Math.max(-120, p.vx - 10);
@@ -374,9 +369,24 @@ export class GameEngine {
     this.state.recentShots = this.state.recentShots.filter(s => now - s.timestamp < 1000);
 
     if (this.state.phase === 'LOBBY') {
-      if (this.state.players.length > 0) {
-        this.startNewMatch();
+      const playerCount = this.state.players.length;
+      if (playerCount >= 2) {
+        this.lobbyTimer -= DT;
+        this.state.lobbyCountdown = Math.max(0, Math.ceil(this.lobbyTimer));
+        this.state.announcementText = `LOBBY: ${playerCount}/${MAX_PLAYERS} PRISONERS. MATCH STARTING IN ${this.state.lobbyCountdown}s...`;
+        if (this.lobbyTimer <= 0) {
+          this.startNewMatch();
+        }
+      } else if (playerCount === 1) {
+        this.lobbyTimer = 15;
+        this.state.lobbyCountdown = 15;
+        this.state.announcementText = `LOBBY: 1/${MAX_PLAYERS} PRISONER READY. WAITING FOR OTHERS TO JOIN VIA LINK...`;
+      } else {
+        this.lobbyTimer = 15;
+        this.state.lobbyCountdown = 0;
+        this.state.announcementText = 'WAITING FOR PRISONERS TO JOIN VIA LINK...';
       }
+      this.updatePlayersPhysics();
       this.flushSoundEvents();
       return;
     }
@@ -408,6 +418,7 @@ export class GameEngine {
     this.updateRopePhysics();
     this.updateProjectiles();
     this.updatePlayersPhysics();
+    this.resolveEscapeAttempts();
 
     this.flushSoundEvents();
   }
@@ -461,61 +472,63 @@ export class GameEngine {
     }
   }
 
-  private attemptEscape(player: Player): void {
-    if (player.hasEscaped || player.state === 'DEAD') return;
-
-    // Strict boundary verification: player must actually be at the exit point
-    if (player.x > H_PIPE_EXIT_X) {
-      return;
-    }
-
-    // Quota Enforcement: if hatch is not active or quota exhausted, Overseer snipes violator
-    if (this.state.phase !== 'SIGNAL_ACTIVE') {
-      this.snipePlayer(player, 'QUOTA_VIOLATED');
-      return;
-    }
-
-    const allowedRemaining = this.state.signalQuota - this.state.signalEscapedCount;
-    if (allowedRemaining <= 0) {
-      this.snipePlayer(player, 'QUOTA_VIOLATED');
-      return;
-    }
-
-    // Check if other players simultaneously crossed the exact exit threshold (<= H_PIPE_EXIT_X)
-    const simultaneousAtExit = this.state.players.filter(p => 
-      p.id !== player.id && 
+  public resolveEscapeAttempts(): void {
+    // Gather all living unescaped players currently at or past the exit threshold hanging on ceiling pipe
+    const candidates = this.state.players.filter(p => 
+      !p.hasEscaped && 
       p.state === 'HANGING_H_PIPE' && 
       p.x <= H_PIPE_EXIT_X && 
-      !p.hasEscaped
+      p.health > 0
     );
 
-    if (allowedRemaining === 1 && simultaneousAtExit.length > 0) {
-      // Multiple simultaneous entrants exceeding single quota slot -> snipe second entrant
-      simultaneousAtExit.sort((a, b) => a.x - b.x);
-      const violator = simultaneousAtExit[0];
-      this.snipePlayer(violator, 'QUOTA_VIOLATED');
-      if (violator.id === player.id) return;
+    if (candidates.length === 0) return;
+
+    // Strictly deterministic sort:
+    // 1. Primary: x coordinate ascending (furthest into the hatch duct first)
+    // 2. Secondary: id ascending (guaranteed deterministic tiebreaker across platforms)
+    candidates.sort((a, b) => {
+      if (a.x !== b.x) return a.x - b.x;
+      return a.id.localeCompare(b.id);
+    });
+
+    const quotaAllowed = this.state.phase === 'SIGNAL_ACTIVE'
+      ? Math.max(0, this.state.signalQuota - this.state.signalEscapedCount)
+      : 0;
+
+    let availableSlots = quotaAllowed;
+
+    for (const player of candidates) {
+      if (availableSlots > 0 && this.state.signalEscapedCount < this.state.signalQuota) {
+        // Escaped!
+        player.hasEscaped = true;
+        player.state = 'ESCAPED';
+        const mins = Math.floor((600 - this.matchTimer) / 60);
+        const secs = Math.floor((600 - this.matchTimer) % 60);
+        player.escapeTime = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+
+        this.state.signalEscapedCount++;
+        this.state.totalEscapedCount++;
+        availableSlots--;
+
+        this.emitSound({ type: 'ESCAPE', x: player.x, y: player.y });
+
+        // Clean up rope if escaping player held or was attached to it
+        if (this.state.rope.heldByPlayerId === player.id || this.state.rope.attachedPlayerId === player.id) {
+          this.dropRope();
+        }
+      } else {
+        // Quota exhausted or hatch not active -> Overseer snipes violator!
+        this.snipePlayer(player, 'QUOTA_VIOLATED');
+      }
     }
 
-    // Success! Escape through hatch
-    player.hasEscaped = true;
-    player.state = 'ESCAPED';
-    const mins = Math.floor((600 - this.matchTimer) / 60);
-    const secs = Math.floor((600 - this.matchTimer) % 60);
-    player.escapeTime = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-
-    this.state.signalEscapedCount++;
-    this.state.totalEscapedCount++;
-    this.emitSound({ type: 'ESCAPE', x: player.x, y: player.y });
-
-    // Clean up rope if escaping player held it
-    if (this.state.rope.heldByPlayerId === player.id || this.state.rope.attachedPlayerId === player.id) {
-      this.dropRope();
-    }
-
-    if (this.state.signalEscapedCount >= this.state.signalQuota) {
+    if (this.state.phase === 'SIGNAL_ACTIVE' && this.state.signalEscapedCount >= this.state.signalQuota) {
       this.closeHatch('QUOTA_FILLED');
     }
+  }
+
+  public attemptEscape(player?: Player): void {
+    this.resolveEscapeAttempts();
   }
 
   private closeHatch(reason: 'QUOTA_FILLED' | 'WINDOW_EXPIRED'): void {

@@ -3,8 +3,9 @@ import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import crypto from 'crypto';
 import { GameEngine } from './gameEngine.js';
-import { ClientInput } from './types.js';
+import { ClientInput, MAX_PLAYERS } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,21 +14,55 @@ const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
 
-const engine = new GameEngine();
+export const engine = new GameEngine();
 
 // Serve static frontend build if available
 const distPath = path.join(__dirname, '../dist');
 app.use(express.static(distPath));
 
+export interface SessionInfo {
+  resumeToken: string;
+  playerId: string;
+  name: string;
+  ws: WebSocket | null;
+  disconnectTime: number | null;
+}
+
+export const sessions = new Map<string, SessionInfo>();
+export const playerToSession = new Map<string, string>();
+
 interface ConnectedClient {
   ws: WebSocket;
   playerId: string;
+  resumeToken: string;
   msgCount: number;
   lastResetTime: number;
 }
 
-const clients = new Map<WebSocket, ConnectedClient>();
+export const clients = new Map<WebSocket, ConnectedClient>();
 const MAX_MESSAGES_PER_SEC = 60;
+const MAX_MESSAGE_BYTES = 4096;
+
+/**
+ * Strict boolean validator: only literal `true` is accepted.
+ * Guards against loose truthy evaluations like `Boolean("false") === true`.
+ */
+export function strictBool(val: unknown): boolean {
+  return val === true;
+}
+
+/**
+ * Validates and sanitizes player names.
+ * Trims whitespace, limits to 16 characters, strips HTML/control characters.
+ */
+export function sanitizePlayerName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length === 0) return null;
+  const clamped = trimmed.slice(0, 16);
+  const sanitized = clamped.replace(/[<>'"&]/g, '').trim();
+  return sanitized.length > 0 ? sanitized : null;
+}
 
 /**
  * Validates and sanitizes raw input from clients.
@@ -41,97 +76,190 @@ export function sanitizeInput(raw: unknown): ClientInput | null {
   const obj = raw as Record<string, unknown>;
 
   let aimAngle = 0;
-  if (typeof obj.aimAngle === 'number' && Number.isFinite(obj.aimAngle)) {
+  if (typeof obj.aimAngle === 'number' && Number.isFinite(obj.aimAngle) && !Number.isNaN(obj.aimAngle)) {
     // Clamp to valid radian range
     aimAngle = Math.max(-Math.PI * 2, Math.min(Math.PI * 2, obj.aimAngle));
   }
 
   return {
-    left: Boolean(obj.left),
-    right: Boolean(obj.right),
-    up: Boolean(obj.up),
-    down: Boolean(obj.down),
-    jump: Boolean(obj.jump),
-    interact: Boolean(obj.interact),
-    attack: Boolean(obj.attack),
-    tackle: Boolean(obj.tackle),
+    left: strictBool(obj.left),
+    right: strictBool(obj.right),
+    up: strictBool(obj.up),
+    down: strictBool(obj.down),
+    jump: strictBool(obj.jump),
+    interact: strictBool(obj.interact),
+    attack: strictBool(obj.attack),
+    tackle: strictBool(obj.tackle),
     aimAngle
   };
 }
 
 wss.on('connection', (ws: WebSocket) => {
-  const playerId = `player_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-  const player = engine.addHumanPlayer(playerId, 'You');
-
-  // Room Full Handling
-  if (!player) {
-    ws.send(JSON.stringify({
-      type: 'ERROR',
-      code: 'ROOM_FULL',
-      message: 'The cell is currently at full capacity (10/10 prisoners).'
-    }));
-    ws.close(1008, 'Room Full');
-    return;
-  }
-
-  const clientInfo: ConnectedClient = {
-    ws,
-    playerId,
-    msgCount: 0,
-    lastResetTime: Date.now()
-  };
-  clients.set(ws, clientInfo);
-
-  // Send initial welcome with assigned ID
-  ws.send(JSON.stringify({
-    type: 'WELCOME',
-    playerId,
-    name: player.name
-  }));
-
-  ws.on('message', (message: string) => {
-    // Rate limit check
-    const now = Date.now();
-    if (now - clientInfo.lastResetTime >= 1000) {
-      clientInfo.msgCount = 0;
-      clientInfo.lastResetTime = now;
-    }
-    clientInfo.msgCount++;
-    if (clientInfo.msgCount > MAX_MESSAGES_PER_SEC) {
-      // Drop excessive message to prevent server flood
+  ws.on('message', (rawMessage: Buffer | string) => {
+    // Message payload size limit
+    if (rawMessage.length > MAX_MESSAGE_BYTES) {
       return;
     }
 
+    // Rate limit check
+    const client = clients.get(ws);
+    const now = Date.now();
+    if (client) {
+      if (now - client.lastResetTime >= 1000) {
+        client.msgCount = 0;
+        client.lastResetTime = now;
+      }
+      client.msgCount++;
+      if (client.msgCount > MAX_MESSAGES_PER_SEC) {
+        return; // Drop excessive messages to prevent flood
+      }
+    }
+
     try {
-      const data = JSON.parse(message.toString());
-      if (data && data.type === 'INPUT') {
-        const validatedInput = sanitizeInput(data.input);
-        if (validatedInput) {
-          engine.handleInput(playerId, validatedInput);
+      const data = JSON.parse(rawMessage.toString());
+      if (!data || typeof data !== 'object') return;
+
+      if (data.type === 'JOIN') {
+        const sanitizedName = sanitizePlayerName(data.name);
+        if (!sanitizedName) {
+          ws.send(JSON.stringify({
+            type: 'ERROR',
+            code: 'INVALID_NAME',
+            message: 'Please enter a valid player name (1-16 characters).'
+          }));
+          return;
         }
-      } else if (data && data.type === 'SET_NAME') {
-        if (typeof data.name === 'string') {
-          const sanitized = data.name.trim().slice(0, 15);
-          if (sanitized && player) {
-            player.name = sanitized;
+
+        // 1. Reconnection Check via resumeToken
+        const token = typeof data.resumeToken === 'string' ? data.resumeToken.trim() : '';
+        if (token && sessions.has(token)) {
+          const session = sessions.get(token)!;
+          const isStillValid = session.disconnectTime === null || (now - session.disconnectTime < 60000);
+          const existingPlayer = engine.state.players.find(p => p.id === session.playerId);
+
+          if (isStillValid && existingPlayer) {
+            if (session.ws && session.ws !== ws && session.ws.readyState === WebSocket.OPEN) {
+              session.ws.close(1000, 'Reconnected from another window');
+            }
+            session.ws = ws;
+            session.disconnectTime = null;
+            session.name = sanitizedName;
+            existingPlayer.name = sanitizedName;
+
+            clients.set(ws, {
+              ws,
+              playerId: session.playerId,
+              resumeToken: session.resumeToken,
+              msgCount: 0,
+              lastResetTime: now
+            });
+
+            ws.send(JSON.stringify({
+              type: 'WELCOME',
+              playerId: session.playerId,
+              name: session.name,
+              resumeToken: session.resumeToken,
+              phase: engine.state.phase
+            }));
+            return;
           }
+        }
+
+        // 2. New Join Check: strictly verify room capacity
+        if (engine.state.players.length >= MAX_PLAYERS) {
+          ws.send(JSON.stringify({
+            type: 'ERROR',
+            code: 'ROOM_FULL',
+            message: 'Room is full. Try again later.'
+          }));
+          return;
+        }
+
+        const playerId = `p_${crypto.randomBytes(4).toString('hex')}`;
+        const resumeToken = crypto.randomUUID();
+        const player = engine.addHumanPlayer(playerId, sanitizedName);
+
+        if (!player) {
+          ws.send(JSON.stringify({
+            type: 'ERROR',
+            code: 'ROOM_FULL',
+            message: 'Room is full. Try again later.'
+          }));
+          return;
+        }
+
+        const newSession: SessionInfo = {
+          resumeToken,
+          playerId,
+          name: sanitizedName,
+          ws,
+          disconnectTime: null
+        };
+        sessions.set(resumeToken, newSession);
+        playerToSession.set(playerId, resumeToken);
+
+        clients.set(ws, {
+          ws,
+          playerId,
+          resumeToken,
+          msgCount: 0,
+          lastResetTime: now
+        });
+
+        ws.send(JSON.stringify({
+          type: 'WELCOME',
+          playerId,
+          name: sanitizedName,
+          resumeToken,
+          phase: engine.state.phase
+        }));
+
+      } else if (data.type === 'INPUT') {
+        if (client) {
+          const validatedInput = sanitizeInput(data.input);
+          if (validatedInput) {
+            engine.handleInput(client.playerId, validatedInput);
+          }
+        }
+      } else if (data.type === 'READY') {
+        if (engine.state.phase === 'LOBBY' && engine.state.players.length >= 1) {
+          engine.startNewMatch();
         }
       }
     } catch {
-      // Ignore malformed JSON
+      // Ignore malformed JSON safely
     }
   });
 
-  ws.on('close', () => {
-    clients.delete(ws);
-    engine.removePlayer(playerId);
-  });
+  const handleDisconnect = () => {
+    const client = clients.get(ws);
+    if (client) {
+      clients.delete(ws);
+      const session = sessions.get(client.resumeToken);
+      if (session) {
+        session.ws = null;
+        session.disconnectTime = Date.now();
+      }
+      engine.removePlayer(client.playerId, false);
+    }
+  };
 
-  ws.on('error', () => {
-    clients.delete(ws);
-    engine.removePlayer(playerId);
-  });
+  ws.on('close', handleDisconnect);
+  ws.on('error', handleDisconnect);
 });
+
+// Periodic Session Expiry Cleanup (every 5 seconds)
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, session] of sessions.entries()) {
+    if (session.disconnectTime !== null && (now - session.disconnectTime > 60000)) {
+      // Reconnect window expired (60s): release player slot permanently
+      engine.removePlayer(session.playerId, true);
+      playerToSession.delete(session.playerId);
+      sessions.delete(token);
+    }
+  }
+}, 5000);
 
 // Authoritative Tick Loop at 30 FPS
 const TICK_INTERVAL_MS = 1000 / 30;
@@ -140,7 +268,7 @@ setInterval(() => {
   // Update Game State (advances physics, checks quota, flushes soundEvents)
   engine.update();
 
-  // Broadcast state to all connected clients
+  // Broadcast state to all connected clients with backpressure protection
   if (clients.size > 0) {
     const payload = JSON.stringify({
       type: 'SYNC',
@@ -148,7 +276,7 @@ setInterval(() => {
     });
 
     for (const [ws] of clients) {
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 65536) {
         ws.send(payload);
       }
     }

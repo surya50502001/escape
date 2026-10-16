@@ -1,17 +1,41 @@
-import { GameState } from '../server/types.js';
+import { GameState, ServerMessage } from '../server/types.js';
 import { GameRenderer } from './renderer.js';
 import { InputManager } from './input.js';
 import { sound } from './audio.js';
 
+// DOM elements
 const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
 const audioBtn = document.getElementById('audioBtn') as HTMLButtonElement;
 const statusDiv = document.getElementById('status') as HTMLDivElement;
+
+const joinOverlay = document.getElementById('joinOverlay') as HTMLDivElement;
+const joinForm = document.getElementById('joinForm') as HTMLFormElement;
+const playerNameInput = document.getElementById('playerNameInput') as HTMLInputElement;
+const joinBtn = document.getElementById('joinBtn') as HTMLButtonElement;
+const joinError = document.getElementById('joinError') as HTMLDivElement;
+const connectingState = document.getElementById('connectingState') as HTMLDivElement;
+const connectingText = document.getElementById('connectingText') as HTMLSpanElement;
 
 const renderer = new GameRenderer(canvas);
 const inputManager = new InputManager(canvas);
 
 let localPlayerId: string = '';
+let localPlayerName: string = '';
+let localResumeToken: string = '';
 let latestState: GameState | null = null;
+let ws: WebSocket | null = null;
+let isConnecting: boolean = false;
+let reconnectTimer: number | null = null;
+
+// Pre-fill previously stored name from sessionStorage
+const savedName = sessionStorage.getItem('pit_player_name');
+if (savedName && playerNameInput) {
+  playerNameInput.value = savedName;
+}
+const savedToken = sessionStorage.getItem('pit_resume_token');
+if (savedToken) {
+  localResumeToken = savedToken;
+}
 
 // Audio toggle
 audioBtn.addEventListener('click', () => {
@@ -20,89 +44,185 @@ audioBtn.addEventListener('click', () => {
   audioBtn.textContent = sound.enabled ? '🔊 Audio: ON' : '🔇 Audio: OFF';
 });
 
-// Setup WebSocket Connection
-const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-const wsHost = window.location.hostname || 'localhost';
-const wsPort = window.location.port || '3001';
-const wsUrl = `${protocol}//${wsHost}:${wsPort}`;
+function showError(message: string): void {
+  joinError.textContent = message;
+  joinError.style.display = 'block';
+  connectingState.style.display = 'none';
+  joinBtn.disabled = false;
+  playerNameInput.disabled = false;
+  joinBtn.textContent = 'RETRY';
+  isConnecting = false;
+}
 
-const ws = new WebSocket(wsUrl);
+function clearError(): void {
+  joinError.textContent = '';
+  joinError.style.display = 'none';
+}
 
-ws.onopen = () => {
-  statusDiv.textContent = 'CONNECTED TO THE PIT';
-  statusDiv.style.color = '#2ecc71';
-};
+function connectToGame(name: string): void {
+  if (isConnecting) return;
+  isConnecting = true;
+  clearError();
 
-ws.onclose = () => {
-  statusDiv.textContent = 'DISCONNECTED FROM SERVER';
-  statusDiv.style.color = '#e74c3c';
-};
+  joinBtn.disabled = true;
+  playerNameInput.disabled = true;
+  connectingText.textContent = 'CONNECTING TO CELL...';
+  connectingState.style.display = 'flex';
 
-ws.onerror = () => {
-  statusDiv.textContent = 'SERVER ERROR - RETRYING...';
-  statusDiv.style.color = '#e74c3c';
-};
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsHost = window.location.hostname || 'localhost';
+  const wsPort = window.location.port || '3001';
+  const wsUrl = `${protocol}//${wsHost}:${wsPort}`;
 
-ws.onmessage = (event) => {
+  if (ws) {
+    try {
+      ws.close();
+    } catch {
+      // Ignore
+    }
+  }
+
   try {
-    const data = JSON.parse(event.data);
-    if (data.type === 'WELCOME') {
-      localPlayerId = data.playerId;
-    } else if (data.type === 'SYNC') {
-      latestState = data.state;
+    ws = new WebSocket(wsUrl);
+  } catch {
+    showError('Could not establish network connection. Please retry.');
+    return;
+  }
 
-      // Update local player position for mouse aiming reference
-      const me = latestState?.players.find(p => p.id === localPlayerId);
-      if (me) {
-        (window as unknown as { localPlayerX: number; localPlayerY: number }).localPlayerX = me.x;
-        (window as unknown as { localPlayerY: number }).localPlayerY = me.y;
-      }
+  ws.onopen = () => {
+    connectingText.textContent = 'AUTHENTICATING IDENTITY...';
+    // Send JOIN request with name and stored resumeToken
+    ws?.send(JSON.stringify({
+      type: 'JOIN',
+      name,
+      resumeToken: localResumeToken || undefined
+    }));
+  };
 
-      // Handle Sound & Visual Events
-      if (latestState?.soundEvents) {
-        for (const ev of latestState.soundEvents) {
-          if (ev.type === 'GUNSHOT') {
-            sound.playGunshot();
-            if (ev.x !== undefined && ev.y !== undefined) {
-              renderer.addBloodSparks(ev.x, ev.y, '#e74c3c', 25);
-            }
-          } else if (ev.type === 'CLANG') {
-            sound.playClang();
-          } else if (ev.type === 'TACKLE') {
-            sound.playTackle();
-            if (ev.x !== undefined && ev.y !== undefined) {
-              renderer.addBloodSparks(ev.x, ev.y, '#ecf0f1', 10);
-            }
-          } else if (ev.type === 'ROCK_HIT') {
-            sound.playRockHit();
-            if (ev.x !== undefined && ev.y !== undefined) {
-              renderer.addBloodSparks(ev.x, ev.y, '#f39c12', 15);
-            }
-          } else if (ev.type === 'ESCAPE') {
-            sound.playEscape();
-          } else if (ev.type === 'ANNOUNCEMENT') {
-            sound.playAnnouncement();
-          } else if (ev.type === 'ROPE_ATTACH') {
-            sound.playRockHit();
-          } else if (ev.type === 'ROPE_PULL') {
-            sound.playTackle();
-          } else if (ev.type === 'FALL_IMPACT') {
-            sound.playTackle();
-            if (ev.x !== undefined && ev.y !== undefined) {
-              renderer.addBloodSparks(ev.x, ev.y, '#94a3b8', 12);
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data) as ServerMessage;
+
+      if (data.type === 'WELCOME') {
+        localPlayerId = data.playerId;
+        localPlayerName = data.name;
+        localResumeToken = data.resumeToken;
+        sessionStorage.setItem('pit_resume_token', data.resumeToken);
+        sessionStorage.setItem('pit_player_name', data.name);
+
+        isConnecting = false;
+        joinOverlay.classList.add('hidden');
+        statusDiv.textContent = `PRISONER: ${localPlayerName}`;
+        statusDiv.style.color = '#22d3ee';
+        sound.init();
+
+      } else if (data.type === 'ERROR') {
+        isConnecting = false;
+        if (data.code === 'ROOM_FULL') {
+          showError('Room is full. Try again later.');
+        } else {
+          showError(data.message || 'Failed to join chamber.');
+        }
+        ws?.close();
+
+      } else if (data.type === 'SYNC') {
+        latestState = data.state;
+
+        // Update local player position for mouse aiming reference
+        const me = latestState?.players.find(p => p.id === localPlayerId);
+        if (me) {
+          (window as unknown as { localPlayerX: number; localPlayerY: number }).localPlayerX = me.x;
+          (window as unknown as { localPlayerY: number }).localPlayerY = me.y;
+        }
+
+        // Handle Sound & Visual Events
+        if (latestState?.soundEvents) {
+          for (const ev of latestState.soundEvents) {
+            if (ev.type === 'GUNSHOT') {
+              sound.playGunshot();
+              if (ev.x !== undefined && ev.y !== undefined) {
+                renderer.addBloodSparks(ev.x, ev.y, '#e74c3c', 25);
+              }
+            } else if (ev.type === 'CLANG') {
+              sound.playClang();
+            } else if (ev.type === 'TACKLE') {
+              sound.playTackle();
+              if (ev.x !== undefined && ev.y !== undefined) {
+                renderer.addBloodSparks(ev.x, ev.y, '#ecf0f1', 10);
+              }
+            } else if (ev.type === 'ROCK_HIT') {
+              sound.playRockHit();
+              if (ev.x !== undefined && ev.y !== undefined) {
+                renderer.addBloodSparks(ev.x, ev.y, '#f39c12', 15);
+              }
+            } else if (ev.type === 'ESCAPE') {
+              sound.playEscape();
+            } else if (ev.type === 'ANNOUNCEMENT') {
+              sound.playAnnouncement();
+            } else if (ev.type === 'ROPE_ATTACH') {
+              sound.playRockHit();
+            } else if (ev.type === 'ROPE_PULL') {
+              sound.playTackle();
+            } else if (ev.type === 'FALL_IMPACT') {
+              sound.playTackle();
+              if (ev.x !== undefined && ev.y !== undefined) {
+                renderer.addBloodSparks(ev.x, ev.y, '#94a3b8', 12);
+              }
             }
           }
         }
       }
+    } catch (err) {
+      console.error(err);
     }
-  } catch (err) {
-    console.error(err);
+  };
+
+  ws.onclose = () => {
+    if (!localPlayerId) {
+      showError('Unable to connect to The Pit server. Click retry.');
+    } else {
+      statusDiv.textContent = 'DISCONNECTED - RECONNECTING...';
+      statusDiv.style.color = '#e74c3c';
+
+      if (!reconnectTimer) {
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null;
+          if (localPlayerName) {
+            connectToGame(localPlayerName);
+          }
+        }, 2000);
+      }
+    }
+  };
+
+  ws.onerror = () => {
+    if (!localPlayerId) {
+      showError('Connection error. Server may be offline.');
+    }
+  };
+}
+
+// Handle Form Submission for Join Game
+joinForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const raw = playerNameInput.value || '';
+  const trimmed = raw.trim();
+
+  if (!trimmed) {
+    showError('Please enter your name before joining.');
+    return;
   }
-};
+  if (trimmed.length > 16) {
+    showError('Name cannot exceed 16 characters.');
+    return;
+  }
+
+  connectToGame(trimmed);
+});
 
 // Send player input loop (30 FPS)
 setInterval(() => {
-  if (ws.readyState === WebSocket.OPEN && localPlayerId) {
+  if (ws && ws.readyState === WebSocket.OPEN && localPlayerId) {
     const currentInput = inputManager.poll();
     ws.send(JSON.stringify({
       type: 'INPUT',

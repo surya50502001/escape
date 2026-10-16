@@ -85,6 +85,8 @@ export interface HatchZone {
 export interface GameState {
   phase: GamePhase;
   matchTimer: number;
+  lobbyCountdown: number;
+  maxPlayers: number;
   signalQuota: number;
   signalEscapedCount: number;
   totalEscapedCount: number;
@@ -110,3 +112,40 @@ export interface ClientInput {
   tackle: boolean;   // Spacebar: tackle or yank rope
   aimAngle: number;
 }
+
+export interface JoinMessage {
+  type: 'JOIN';
+  name: string;
+  resumeToken?: string;
+}
+
+export interface WelcomeMessage {
+  type: 'WELCOME';
+  playerId: string;
+  name: string;
+  resumeToken: string;
+  phase: GamePhase;
+}
+
+export interface ErrorMessage {
+  type: 'ERROR';
+  code: 'ROOM_FULL' | 'INVALID_NAME' | 'MALFORMED' | 'RATE_LIMITED';
+  message: string;
+}
+
+export interface SyncMessage {
+  type: 'SYNC';
+  state: GameState;
+}
+
+export interface InputMessage {
+  type: 'INPUT';
+  input: ClientInput;
+}
+
+export interface ReadyMessage {
+  type: 'READY';
+}
+
+export type ClientMessage = JoinMessage | InputMessage | ReadyMessage;
+export type ServerMessage = WelcomeMessage | ErrorMessage | SyncMessage;
