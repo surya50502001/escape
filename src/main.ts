@@ -8,6 +8,7 @@ const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
 const audioBtn = document.getElementById('audioBtn') as HTMLButtonElement;
 const statusDiv = document.getElementById('status') as HTMLDivElement;
 const readyBtn = document.getElementById('readyBtn') as HTMLButtonElement | null;
+const fullscreenBtn = document.getElementById('fullscreenBtn') as HTMLButtonElement | null;
 
 const joinOverlay = document.getElementById('joinOverlay') as HTMLDivElement;
 const joinForm = document.getElementById('joinForm') as HTMLFormElement;
@@ -44,6 +45,22 @@ audioBtn.addEventListener('click', () => {
   sound.enabled = !sound.enabled;
   audioBtn.textContent = sound.enabled ? '🔊 Audio: ON' : '🔇 Audio: OFF';
 });
+
+// Fullscreen toggle
+if (fullscreenBtn) {
+  fullscreenBtn.addEventListener('click', () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+      fullscreenBtn.textContent = '🗗 Exit Fullscreen';
+    } else {
+      document.exitFullscreen().catch(() => {});
+      fullscreenBtn.textContent = '⛶ Fullscreen';
+    }
+  });
+  document.addEventListener('fullscreenchange', () => {
+    fullscreenBtn.textContent = document.fullscreenElement ? '🗗 Exit Fullscreen' : '⛶ Fullscreen';
+  });
+}
 
 if (readyBtn) {
   readyBtn.addEventListener('click', () => {

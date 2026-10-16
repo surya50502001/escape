@@ -150,13 +150,33 @@ export class GameRenderer {
       ctx.fill();
     }
 
-    // Heavy Dirty Concrete Floor
-    ctx.fillStyle = '#1c1f26';
+    // Heavy Dirty Concrete Floor & Foundation (Basement)
+    ctx.fillStyle = '#181b22';
     ctx.fillRect(0, FLOOR_Y, this.width, this.height - FLOOR_Y);
+
+    // Foundation support girders / rebar columns in basement
+    ctx.fillStyle = '#12151c';
+    for (let bx = 60; bx < this.width; bx += 140) {
+      ctx.fillRect(bx, FLOOR_Y, 12, this.height - FLOOR_Y);
+      ctx.fillStyle = '#222733';
+      ctx.fillRect(bx + 4, FLOOR_Y + 12, 4, 4);
+      ctx.fillRect(bx + 4, FLOOR_Y + 36, 4, 4);
+      ctx.fillStyle = '#12151c';
+    }
 
     // Concrete floor top curb with grunge
     ctx.fillStyle = '#2d3340';
     ctx.fillRect(0, FLOOR_Y - 4, this.width, 5);
+
+    // Curb metallic edge highlight
+    ctx.fillStyle = '#475569';
+    ctx.fillRect(0, FLOOR_Y - 4, this.width, 1.5);
+
+    // Basement Stencil Label
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('SUB-LEVEL 00 // DETENTION PIT BASEMENT', 40, FLOOR_Y + 28);
 
     // Cracks in the concrete floor
     ctx.strokeStyle = '#0d0f14';
@@ -838,6 +858,12 @@ export class GameRenderer {
 
     // --- ANIMATIONS ACCORDING TO STATE ---
     if (p.state === 'ON_FLOOR') {
+      // Ground contact shadow under feet
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 14, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+
       const isRunning = Math.abs(p.vx) > 10;
       const step = isRunning ? Math.sin(Date.now() * 0.016) : 0;
 
