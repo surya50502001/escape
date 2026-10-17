@@ -163,7 +163,7 @@ export const SPAWN_RIGHT_X = 1200;
 /** Ledge above maintenance room — ladder from floor reaches here (Route A) */
 export const MAINT_UPPER_LEDGE_Y = 460;
 export const MAINT_UPPER_LEDGE_X = 80;
-export const MAINT_UPPER_LEDGE_W = 280;
+export const MAINT_UPPER_LEDGE_W = 500;
 
 /** Rope anchor bolt on right wall of maintenance room (Route B) */
 export const ROPE_ANCHOR_X = 360;
@@ -218,20 +218,21 @@ export const MAZE_WALLS: WallRect[] = [
   { x: 2280, y: FLOOR_Y, width: 490,  height: 40, solid: true },
 
   // ══ MAINTENANCE ROOM (left side, X=30–420, Y=460–620) ════════════════════
-  // Dividing wall separating maintenance from main floor
-  { x: 420, y: 430, width: 22, height: 190, solid: true },
-  // Upper ledge inside maintenance room — ladder target (Route A)
+  // Dividing wall upper lintel (doorway below Y=380 allows walking on catwalk Y=460 and floor Y=620)
+  { x: 420, y: 200, width: 22, height: 180, solid: true },
+  // Upper catwalk from maintenance room reaching dormitory entrance (Route A)
   { x: MAINT_UPPER_LEDGE_X, y: MAINT_UPPER_LEDGE_Y, width: MAINT_UPPER_LEDGE_W, height: 16, isPlatform: true },
-  // Low shelf inside maintenance room
-  { x: 80,  y: 540, width: 140, height: 12, isPlatform: true },
+  // Stepping shelves inside maintenance room (allow jumping up while carrying equipment)
+  { x: 250, y: 560, width: 110, height: 12, isPlatform: true },
+  { x: 80,  y: 510, width: 150, height: 12, isPlatform: true },
 
   // ══ DORMITORY (X=580–1080, Y=200–360) ════════════════════════════════════
   // Dormitory floor ledge
   { x: DORM_LEFT_X,  y: DORM_LEDGE_Y, width: DORM_RIGHT_X - DORM_LEFT_X, height: 18, isPlatform: true },
-  // Dormitory left wall
-  { x: DORM_LEFT_X,  y: 200, width: 22, height: DORM_LEDGE_Y - 200, solid: true },
-  // Dormitory right wall
-  { x: DORM_RIGHT_X, y: 200, width: 22, height: DORM_LEDGE_Y - 200, solid: true },
+  // Dormitory left wall upper lintel (doorway from Y=290 to DORM_LEDGE_Y=360)
+  { x: DORM_LEFT_X,  y: 200, width: 22, height: 90, solid: true },
+  // Dormitory right wall upper lintel (doorway from Y=290 to DORM_LEDGE_Y=360)
+  { x: DORM_RIGHT_X, y: 200, width: 22, height: 90, solid: true },
   // Dormitory ceiling
   { x: DORM_LEFT_X,  y: 200, width: DORM_RIGHT_X - DORM_LEFT_X, height: 18, isPlatform: true },
   // Bunk bed mid-shelf inside dormitory
@@ -241,8 +242,8 @@ export const MAZE_WALLS: WallRect[] = [
   // ══ UPPER-LEFT PIPE LANDING (near escape hatch, X=200–360, Y=200) ════════
   { x: 200, y: 200, width: 160, height: 14, isPlatform: true },
 
-  // ══ SERVICE CORRIDOR (X=1200–1600, Y=500) ════════════════════════════════
-  { x: 1200, y: 500, width: 400, height: 16, isPlatform: true },
+  // ══ SERVICE CORRIDOR (X=1150–1600, Y=500) ════════════════════════════════
+  { x: 1150, y: 500, width: 450, height: 16, isPlatform: true },
   // Security gate pillar
   { x: 1230, y: 516, width: 18,  height: 104, solid: true },
 
@@ -258,12 +259,12 @@ export const MAZE_WALLS: WallRect[] = [
   // ══ BASEMENT PASSAGES & PLATFORMS ════════════════════════════════════════
   // Basement left wall (connects to shaft)
   { x: 1600, y: FLOOR_Y + 40, width: 22, height: LOWER_FLOOR_Y - FLOOR_Y - 40, solid: true },
-  // Basement mid-platform (stepping stone)
-  { x: 1700, y: 840, width: 180, height: 14, isPlatform: true },
-  // Basement right platform
-  { x: 2300, y: 870, width: 160, height: 14, isPlatform: true },
-  // Basement upper-left return ledge — connects back toward main floor via ladder
-  { x: 1620, y: 720, width: 200, height: 14, isPlatform: true },
+  // Basement stepping platforms leading out of the pit runoff (Route C return staircase, clear of shaft gap at X=2100-2280)
+  { x: 1900, y: 910, width: 180, height: 14, isPlatform: true },
+  { x: 1780, y: 840, width: 150, height: 14, isPlatform: true },
+  { x: 1680, y: 770, width: 140, height: 14, isPlatform: true },
+  { x: 1620, y: 700, width: 120, height: 14, isPlatform: true },
+  { x: 1620, y: 650, width: 100, height: 14, isPlatform: true },
 ];
 
 

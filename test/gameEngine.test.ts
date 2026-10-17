@@ -945,8 +945,8 @@ describe('The Pit - Complete Multiplayer Audit & Unit Tests', () => {
       engine.tryPickupLadder(p);
       assert.equal(ladder.state, 'CARRIED');
 
-      // Walk to new position and drop with E
-      p.x = 750;
+      // Walk to new position under maintenance ledge and drop with E
+      p.x = 350;
       p.y = FLOOR_Y;
       const dropInput = createDefaultInput();
       dropInput.interact = true;
@@ -955,7 +955,7 @@ describe('The Pit - Complete Multiplayer Audit & Unit Tests', () => {
       assert.equal(ladder.state, 'PLACED');
       assert.equal(ladder.carriedByPlayerId, null);
       assert.equal(p.carryingLadderId, null);
-      assert.equal(ladder.x, 750);
+      assert.equal(ladder.x, 350);
       assert.equal(ladder.isPlaced, true, 'Placement near floor must be valid');
     });
 

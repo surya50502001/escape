@@ -22,8 +22,8 @@ export const HATCH_ZONE: HatchZone = { x: 40, y: 40, width: 90, height: 90 };
 export const INITIAL_LADDER_POSITIONS: Array<{ id: string; x: number; y: number; height: number }> = [
   // Route A: maintenance room ladder — base on main floor, top reaches MAINT_UPPER_LEDGE_Y
   { id: 'ladder_maint',   x: 200,  y: MAINT_UPPER_LEDGE_Y, height: FLOOR_Y - MAINT_UPPER_LEDGE_Y },
-  // General-use ladder in storage area right of main floor
-  { id: 'ladder_storage', x: 1320, y: FLOOR_Y - 90, height: 90 },
+  // General-use ladder in storage area right of main floor — base on main floor, top reaches service corridor at Y=500
+  { id: 'ladder_storage', x: 1320, y: FLOOR_Y - 120, height: 120 },
 ];
 
 /**
@@ -97,8 +97,12 @@ const HUMAN_COLORS = [
   '#ec4899', '#3b82f6', '#14b8a6', '#f43f5e', '#84cc16'
 ];
 
-/** Maximum Y a player can stand at (main floor or platform) without being in the basement */
-function getNearestFloorY(px: number, _py: number): number {
+/** Floor Y below the player's position */
+function getNearestFloorY(px: number, py: number): number {
+  // If player is below the main floor level (in the basement passages)
+  if (py > FLOOR_Y + 30) {
+    return LOWER_FLOOR_Y;
+  }
   // Shaft gap: players fall through to basement
   if (px >= SHAFT_LEFT_X && px <= SHAFT_RIGHT_X) {
     return LOWER_FLOOR_Y;
@@ -168,8 +172,8 @@ function resolveHorizontalWallCollision(
   for (const w of walls) {
     if (!w.solid && !w.isPlatform) continue;
     if (w.solid === false && w.isPlatform !== true) continue;
-    // Only solid walls block horizontally
-    if (!w.solid) continue;
+    // Only solid vertical walls block horizontally (skip wide horizontal floor/ceiling slabs)
+    if (!w.solid || w.width > 120) continue;
     // If player's feet are at or above the top surface (+6px tolerance for standing on it),
     // they are walking on top of it, not colliding with its vertical side.
     if (py <= w.y + 6) continue;
@@ -620,25 +624,34 @@ export class GameEngine {
 
   /**
    * Validate that a ladder is placed against a valid surface.
-   * A ladder is valid if its base is on/near a floor or platform,
-   * and its top can reach a climbable ledge.
+   * - Base must rest on a real floor or platform.
+   * - Ladder must not penetrate solid geometry.
+   * - Top must reach a usable destination (elevated ledge, platform, or escape pipe).
    */
   public validateLadderPlacement(ladder: Ladder): boolean {
     const baseY = ladder.y + ladder.height;
     const topY = ladder.y;
     const lx = ladder.x;
 
-    // Base must rest on a valid surface
+    // 1. Base must rest on a real floor or platform
     let baseValid = false;
     const floorSurfaces = [FLOOR_Y, LOWER_FLOOR_Y];
     for (const fy of floorSurfaces) {
-      if (baseY >= fy - 10 && baseY <= fy + 30) { baseValid = true; break; }
+      if (Math.abs(baseY - fy) <= 12) {
+        if (fy === FLOOR_Y && ((lx >= 30 && lx <= 2100) || (lx >= 2280 && lx <= WORLD_WIDTH - 30))) {
+          baseValid = true;
+          break;
+        } else if (fy === LOWER_FLOOR_Y && (lx >= BASEMENT_ENTRY_X && lx <= WORLD_WIDTH - 30)) {
+          baseValid = true;
+          break;
+        }
+      }
     }
     if (!baseValid) {
       for (const wall of MAZE_WALLS) {
         if (!wall.isPlatform && !wall.solid) continue;
-        if (Math.abs(baseY - wall.y) < 25 &&
-            lx >= wall.x - 30 && lx <= wall.x + wall.width + 30) {
+        if (Math.abs(baseY - wall.y) <= 14 &&
+            lx >= wall.x - 10 && lx <= wall.x + wall.width + 10) {
           baseValid = true;
           break;
         }
@@ -646,40 +659,54 @@ export class GameEngine {
     }
     if (!baseValid) return false;
 
-    // Ladder must not be placed inside a solid wall (skip world boundary walls)
+    // 2. Ladder must not be placed inside solid geometry (skip world boundary slabs)
     for (const wall of MAZE_WALLS) {
       if (!wall.solid) continue;
       if (wall.width >= WORLD_WIDTH - 10 || wall.height >= WORLD_HEIGHT - 10) continue;
       if (wall.width <= 30 && wall.x <= 30) continue; // left boundary
       if (wall.width <= 30 && wall.x >= WORLD_WIDTH - 60) continue; // right boundary
-      const overlapX = lx + 10 > wall.x && lx - 10 < wall.x + wall.width;
-      const overlapY = topY < wall.y + wall.height && baseY > wall.y;
+      if (wall.y >= FLOOR_Y && wall.height >= 30) continue; // main floor slab
+      if (wall.y >= LOWER_FLOOR_Y && wall.height >= 30) continue; // basement floor slab
+
+      const overlapX = lx + 8 > wall.x && lx - 8 < wall.x + wall.width;
+      const overlapY = topY < wall.y + wall.height && baseY > wall.y + 4;
       if (overlapX && overlapY) return false;
     }
 
-    // Top must be near a usable surface or ceiling pipe
-    let topNearSurface = topY <= H_PIPE_Y + 60;
-    if (!topNearSurface) {
-      for (const wall of MAZE_WALLS) {
-        if (!wall.isPlatform && !wall.solid) continue;
-        if (Math.abs(topY - wall.y) < 60 &&
+    // 3. Top must connect to a usable destination
+    let reachesDestination = false;
+
+    // A) Elevated platform or catwalk above base
+    for (const wall of MAZE_WALLS) {
+      if (!wall.isPlatform && !wall.solid) continue;
+      if (wall.y < baseY - 30) {
+        const topNearWall = Math.abs(topY - wall.y) <= 35;
+        const ladderSpansWall = topY <= wall.y + 10 && baseY >= wall.y + 30;
+        if ((topNearWall || ladderSpansWall) &&
             lx >= wall.x - 30 && lx <= wall.x + wall.width + 30) {
-          topNearSurface = true;
-          break;
-        }
-      }
-    }
-    // Valid if base is on a floor and top is above it by at least 40px
-    if (!topNearSurface) {
-      for (const fy of floorSurfaces) {
-        if (baseY >= fy - 10 && baseY <= fy + 30 && topY < fy - 40) {
-          topNearSurface = true;
+          reachesDestination = true;
           break;
         }
       }
     }
 
-    return topNearSurface;
+    // B) Reaches main floor from basement return
+    if (!reachesDestination && baseY > FLOOR_Y + 40 && Math.abs(topY - FLOOR_Y) <= 30) {
+      if ((lx >= 30 && lx <= 2100) || (lx >= 2280 && lx <= WORLD_WIDTH - 30)) {
+        reachesDestination = true;
+      }
+    }
+
+    // C) Ceiling escape pipe or vertical pipe
+    if (!reachesDestination) {
+      if (topY <= H_PIPE_Y + 30 && lx >= 40 && lx <= V_PIPE_X + 40) {
+        reachesDestination = true;
+      } else if (Math.abs(lx - V_PIPE_X) <= 35 && topY < baseY - 30) {
+        reachesDestination = true;
+      }
+    }
+
+    return reachesDestination;
   }
 
   /**
@@ -1644,7 +1671,49 @@ export class GameEngine {
 
       } else if (p.state === 'CLIMBING_LADDER') {
         p.y += p.vy * DT;
-        // Ladder x is enforced in handleInput, just apply vy here
+        const ladder = this.state.ladders.find(l =>
+          l.state === 'PLACED' && l.isPlaced &&
+          Math.abs(p.x - l.x) < 40 &&
+          p.y >= l.y - 15 && p.y <= l.y + l.height + 15
+        );
+        if (ladder) {
+          p.x = ladder.x;
+          // Check if climbing player reached an elevated platform along the ladder
+          let reachedPlatformY: number | null = null;
+          for (const wall of MAZE_WALLS) {
+            if (!wall.isPlatform && !wall.solid) continue;
+            if (wall.y < ladder.y + ladder.height - 20 && wall.y >= ladder.y - 10) {
+              if (Math.abs(p.y - wall.y) <= 8 &&
+                  ladder.x >= wall.x - 30 && ladder.x <= wall.x + wall.width + 30) {
+                reachedPlatformY = wall.y;
+                break;
+              }
+            }
+          }
+          if (reachedPlatformY !== null && p.vy < 0) {
+            p.y = reachedPlatformY;
+            p.vy = 0;
+            p.state = 'ON_FLOOR';
+            p.isGrounded = true;
+          } else if (p.vy < 0 && p.y <= ladder.y + 5) {
+            p.y = ladder.y;
+            p.vy = 0;
+            p.state = 'ON_FLOOR';
+            p.isGrounded = true;
+          } else if (p.vy > 0 && p.y >= ladder.y + ladder.height - 5) {
+            p.y = ladder.y + ladder.height;
+            p.vy = 0;
+            p.state = 'ON_FLOOR';
+            p.isGrounded = true;
+          }
+        }
+        if (p.climbGrabbingId) {
+          const victim = this.state.players.find(x => x.id === p.climbGrabbingId);
+          if (victim) {
+            victim.x = p.x;
+            victim.y = p.y + 42;
+          }
+        }
       }
 
       // ── MOVING BARRIER COLLISION ─────────────────────────────────────────

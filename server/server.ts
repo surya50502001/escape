@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import { GameEngine } from './gameEngine.js';
+import { RoomManager, RoomSession, RoomClient } from './rooms.js';
 import { ClientInput, MAX_PLAYERS } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -14,32 +15,20 @@ const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
 
-export const engine = new GameEngine();
+export const roomManager = new RoomManager();
+export const defaultRoom = roomManager.getDefaultRoom();
+export const engine = defaultRoom.engine;
+export const sessions = defaultRoom.sessions;
+export const clients = defaultRoom.clients;
+export const playerToSession = defaultRoom.playerToSession;
 
 // Serve static frontend build if available
 const distPath = path.join(__dirname, '../dist');
 app.use(express.static(distPath));
 
-export interface SessionInfo {
-  resumeToken: string;
-  playerId: string;
-  name: string;
-  ws: WebSocket | null;
-  disconnectTime: number | null;
-}
+export type SessionInfo = RoomSession;
+export type ConnectedClient = RoomClient;
 
-export const sessions = new Map<string, SessionInfo>();
-export const playerToSession = new Map<string, string>();
-
-interface ConnectedClient {
-  ws: WebSocket;
-  playerId: string;
-  resumeToken: string;
-  msgCount: number;
-  lastResetTime: number;
-}
-
-export const clients = new Map<WebSocket, ConnectedClient>();
 const MAX_MESSAGES_PER_SEC = 60;
 const MAX_MESSAGE_BYTES = 4096;
 
