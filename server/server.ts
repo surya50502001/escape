@@ -5,8 +5,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import { GameEngine } from './gameEngine.js';
-import { RoomManager, RoomSession, RoomClient } from './rooms.js';
-import { ClientInput, MAX_PLAYERS } from './types.js';
+import { RoomManager, RoomSession, RoomClient, MatchRoom } from './rooms.js';
+import { ClientInput, MAX_PLAYERS, Player } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -95,7 +95,8 @@ wss.on('connection', (ws: WebSocket) => {
     }
 
     // Rate limit check
-    const client = clients.get(ws);
+    const currentRoom = roomManager.findRoomBySocket(ws);
+    const client = currentRoom ? currentRoom.clients.get(ws) : null;
     const now = Date.now();
     if (client) {
       if (now - client.lastResetTime >= 1000) {
@@ -123,17 +124,49 @@ wss.on('connection', (ws: WebSocket) => {
           return;
         }
 
-        // 1. Reconnection Check via resumeToken
         const token = typeof data.resumeToken === 'string' ? data.resumeToken.trim() : '';
-        if (token && sessions.has(token)) {
-          const session = sessions.get(token)!;
+        const requestedCode = typeof data.roomCode === 'string' ? data.roomCode.trim().toUpperCase() : '';
+        const shouldCreate = data.createRoom === true;
+
+        let targetRoom: MatchRoom | undefined;
+
+        // 1. Reconnection Check: Reconnect ONLY to player's original room
+        if (token) {
+          const originalRoom = roomManager.findRoomByToken(token);
+          if (originalRoom) {
+            targetRoom = originalRoom;
+          }
+        }
+
+        // 2. Room Resolution if not reconnecting to an existing session
+        if (!targetRoom) {
+          if (shouldCreate) {
+            targetRoom = roomManager.createPrivateRoom();
+          } else if (requestedCode && requestedCode !== 'DEFAULT') {
+            targetRoom = roomManager.getRoom(requestedCode);
+            if (!targetRoom) {
+              ws.send(JSON.stringify({
+                type: 'ERROR',
+                code: 'ROOM_NOT_FOUND',
+                message: `Room "${requestedCode}" does not exist. Check code or create a new room.`
+              }));
+              return;
+            }
+          } else {
+            targetRoom = roomManager.getDefaultRoom();
+          }
+        }
+
+        // 3. Check for existing session in this room
+        if (token && targetRoom.sessions.has(token)) {
+          const session = targetRoom.sessions.get(token)!;
           const isStillValid = session.disconnectTime === null || (now - session.disconnectTime < 60000);
-          const existingPlayer = engine.state.players.find(p => p.id === session.playerId);
+          const existingPlayer = targetRoom.engine.state.players.find(p => p.id === session.playerId);
 
           if (isStillValid && existingPlayer) {
             const oldWs = session.ws;
             if (oldWs && oldWs !== ws) {
-              clients.delete(oldWs);
+              targetRoom.clients.delete(oldWs);
               try {
                 if (oldWs.readyState === WebSocket.OPEN || oldWs.readyState === WebSocket.CONNECTING) {
                   oldWs.close(1000, 'Reconnected from another window');
@@ -147,7 +180,7 @@ wss.on('connection', (ws: WebSocket) => {
             session.name = sanitizedName;
             existingPlayer.name = sanitizedName;
 
-            clients.set(ws, {
+            targetRoom.clients.set(ws, {
               ws,
               playerId: session.playerId,
               resumeToken: session.resumeToken,
@@ -160,14 +193,15 @@ wss.on('connection', (ws: WebSocket) => {
               playerId: session.playerId,
               name: session.name,
               resumeToken: session.resumeToken,
-              phase: engine.state.phase
+              phase: targetRoom.engine.state.phase,
+              roomCode: targetRoom.id
             }));
             return;
           }
         }
 
-        // 2. New Join Check: strictly verify room capacity
-        if (engine.state.players.length >= MAX_PLAYERS) {
+        // 4. Capacity validation for target room
+        if (targetRoom.engine.state.players.length >= MAX_PLAYERS) {
           ws.send(JSON.stringify({
             type: 'ERROR',
             code: 'ROOM_FULL',
@@ -176,9 +210,10 @@ wss.on('connection', (ws: WebSocket) => {
           return;
         }
 
+        // 5. Add new player to target room
         const playerId = `p_${crypto.randomBytes(4).toString('hex')}`;
         const resumeToken = crypto.randomUUID();
-        const player = engine.addHumanPlayer(playerId, sanitizedName);
+        const player = targetRoom.engine.addHumanPlayer(playerId, sanitizedName);
 
         if (!player) {
           ws.send(JSON.stringify({
@@ -196,10 +231,11 @@ wss.on('connection', (ws: WebSocket) => {
           ws,
           disconnectTime: null
         };
-        sessions.set(resumeToken, newSession);
-        playerToSession.set(playerId, resumeToken);
+        targetRoom.sessions.set(resumeToken, newSession);
+        targetRoom.playerToSession.set(playerId, resumeToken);
+        roomManager.associateTokenWithRoom(resumeToken, targetRoom.id);
 
-        clients.set(ws, {
+        targetRoom.clients.set(ws, {
           ws,
           playerId,
           resumeToken,
@@ -212,19 +248,27 @@ wss.on('connection', (ws: WebSocket) => {
           playerId,
           name: sanitizedName,
           resumeToken,
-          phase: engine.state.phase
+          phase: targetRoom.engine.state.phase,
+          roomCode: targetRoom.id
         }));
 
       } else if (data.type === 'INPUT') {
-        if (client) {
-          const validatedInput = sanitizeInput(data.input);
-          if (validatedInput) {
-            engine.handleInput(client.playerId, validatedInput);
+        const room = roomManager.findRoomBySocket(ws);
+        if (room) {
+          const roomClient = room.clients.get(ws);
+          if (roomClient) {
+            const validatedInput = sanitizeInput(data.input);
+            if (validatedInput) {
+              room.engine.handleInput(roomClient.playerId, validatedInput);
+            }
           }
         }
       } else if (data.type === 'READY') {
-        if (engine.state.phase === 'LOBBY' && engine.state.players.length >= 1) {
-          engine.startNewMatch();
+        const room = roomManager.findRoomBySocket(ws);
+        if (room) {
+          if (room.engine.state.phase === 'LOBBY' && room.engine.state.players.length >= 1) {
+            room.engine.startNewMatch();
+          }
         }
       }
     } catch {
@@ -241,18 +285,8 @@ wss.on('connection', (ws: WebSocket) => {
 });
 
 export function handleClientDisconnect(ws: WebSocket, now: number = Date.now()): void {
-  const client = clients.get(ws);
-  if (client) {
-    clients.delete(ws);
-    const session = sessions.get(client.resumeToken);
-    if (session) {
-      if (session.ws === ws) {
-        session.ws = null;
-        session.disconnectTime = now;
-        engine.removePlayer(client.playerId, false);
-      }
-    }
-  }
+  const room = roomManager.findRoomBySocket(ws) || defaultRoom;
+  room.handleClientDisconnect(ws, now);
 }
 
 const isMain = Boolean(process.argv[1] && (process.argv[1].endsWith('server.ts') || process.argv[1].endsWith('server.js')));
@@ -260,37 +294,14 @@ const isMain = Boolean(process.argv[1] && (process.argv[1].endsWith('server.ts')
 if (isMain) {
   // Periodic Session Expiry Cleanup (every 5 seconds)
   setInterval(() => {
-    const now = Date.now();
-    for (const [token, session] of sessions.entries()) {
-      if (session.disconnectTime !== null && (now - session.disconnectTime > 60000)) {
-        // Reconnect window expired (60s): release player slot permanently
-        engine.removePlayer(session.playerId, true);
-        playerToSession.delete(session.playerId);
-        sessions.delete(token);
-      }
-    }
+    roomManager.cleanAllExpiredSessions(Date.now());
   }, 5000);
 
-  // Authoritative Tick Loop at 30 FPS
+  // Authoritative Tick Loop at 30 FPS across all active rooms
   const TICK_INTERVAL_MS = 1000 / 30;
 
   setInterval(() => {
-    // Update Game State (advances physics, checks quota, flushes soundEvents)
-    engine.update();
-
-    // Broadcast state to all connected clients with backpressure protection
-    if (clients.size > 0) {
-      const payload = JSON.stringify({
-        type: 'SYNC',
-        state: engine.state
-      });
-
-      for (const [ws] of clients) {
-        if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 65536) {
-          ws.send(payload);
-        }
-      }
-    }
+    roomManager.updateAllRooms();
   }, TICK_INTERVAL_MS);
 
   const PORT = Number(process.env.PORT) || 3001;

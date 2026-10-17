@@ -318,6 +318,8 @@ export interface JoinMessage {
   type: 'JOIN';
   name: string;
   resumeToken?: string;
+  roomCode?: string;
+  createRoom?: boolean;
 }
 
 export interface WelcomeMessage {
@@ -326,11 +328,12 @@ export interface WelcomeMessage {
   name: string;
   resumeToken: string;
   phase: GamePhase;
+  roomCode: string;
 }
 
 export interface ErrorMessage {
   type: 'ERROR';
-  code: 'ROOM_FULL' | 'INVALID_NAME' | 'MALFORMED' | 'RATE_LIMITED';
+  code: 'ROOM_FULL' | 'INVALID_NAME' | 'MALFORMED' | 'RATE_LIMITED' | 'ROOM_NOT_FOUND';
   message: string;
 }
 

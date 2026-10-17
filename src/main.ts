@@ -9,11 +9,15 @@ const audioBtn = document.getElementById('audioBtn') as HTMLButtonElement;
 const statusDiv = document.getElementById('status') as HTMLDivElement;
 const readyBtn = document.getElementById('readyBtn') as HTMLButtonElement | null;
 const fullscreenBtn = document.getElementById('fullscreenBtn') as HTMLButtonElement | null;
+const roomBadge = document.getElementById('roomBadge') as HTMLDivElement | null;
+const roomCodeText = document.getElementById('roomCodeText') as HTMLSpanElement | null;
 
 const joinOverlay = document.getElementById('joinOverlay') as HTMLDivElement;
 const joinForm = document.getElementById('joinForm') as HTMLFormElement;
 const playerNameInput = document.getElementById('playerNameInput') as HTMLInputElement;
+const roomCodeInput = document.getElementById('roomCodeInput') as HTMLInputElement | null;
 const joinBtn = document.getElementById('joinBtn') as HTMLButtonElement;
+const createRoomBtn = document.getElementById('createRoomBtn') as HTMLButtonElement | null;
 const joinError = document.getElementById('joinError') as HTMLDivElement;
 const connectingState = document.getElementById('connectingState') as HTMLDivElement;
 const connectingText = document.getElementById('connectingText') as HTMLSpanElement;
@@ -24,6 +28,7 @@ const inputManager = new InputManager(canvas);
 let localPlayerId: string = '';
 let localPlayerName: string = '';
 let localResumeToken: string = '';
+let currentRoomCode: string = '';
 let latestState: GameState | null = null;
 let ws: WebSocket | null = null;
 let isConnecting: boolean = false;
@@ -37,6 +42,18 @@ if (savedName && playerNameInput) {
 const savedToken = sessionStorage.getItem('pit_resume_token');
 if (savedToken) {
   localResumeToken = savedToken;
+}
+
+// Pre-fill room code from query params or storage
+const urlParams = new URLSearchParams(window.location.search);
+const roomParam = urlParams.get('room');
+if (roomParam && roomCodeInput) {
+  roomCodeInput.value = roomParam.trim().toUpperCase();
+} else {
+  const savedRoom = sessionStorage.getItem('pit_room_code');
+  if (savedRoom && roomCodeInput && savedRoom !== 'default') {
+    roomCodeInput.value = savedRoom.toUpperCase();
+  }
 }
 
 // Audio toggle
@@ -75,7 +92,9 @@ function showError(message: string): void {
   joinError.style.display = 'block';
   connectingState.style.display = 'none';
   joinBtn.disabled = false;
+  if (createRoomBtn) createRoomBtn.disabled = false;
   playerNameInput.disabled = false;
+  if (roomCodeInput) roomCodeInput.disabled = false;
   joinBtn.textContent = 'RETRY';
   isConnecting = false;
 }
@@ -85,14 +104,16 @@ function clearError(): void {
   joinError.style.display = 'none';
 }
 
-function connectToGame(name: string): void {
+function connectToGame(name: string, roomCode?: string, createRoom?: boolean): void {
   if (isConnecting) return;
   isConnecting = true;
   clearError();
 
   joinBtn.disabled = true;
+  if (createRoomBtn) createRoomBtn.disabled = true;
   playerNameInput.disabled = true;
-  connectingText.textContent = 'CONNECTING TO CELL...';
+  if (roomCodeInput) roomCodeInput.disabled = true;
+  connectingText.textContent = createRoom ? 'CREATING PRIVATE CELL...' : 'CONNECTING TO CELL...';
   connectingState.style.display = 'flex';
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -117,11 +138,13 @@ function connectToGame(name: string): void {
 
   ws.onopen = () => {
     connectingText.textContent = 'AUTHENTICATING IDENTITY...';
-    // Send JOIN request with name and stored resumeToken
+    // Send JOIN request with name, stored resumeToken, and room options
     ws?.send(JSON.stringify({
       type: 'JOIN',
       name,
-      resumeToken: localResumeToken || undefined
+      resumeToken: localResumeToken || undefined,
+      roomCode: roomCode || undefined,
+      createRoom: Boolean(createRoom)
     }));
   };
 
@@ -133,8 +156,21 @@ function connectToGame(name: string): void {
         localPlayerId = data.playerId;
         localPlayerName = data.name;
         localResumeToken = data.resumeToken;
+        currentRoomCode = data.roomCode;
         sessionStorage.setItem('pit_resume_token', data.resumeToken);
         sessionStorage.setItem('pit_player_name', data.name);
+        if (data.roomCode) {
+          sessionStorage.setItem('pit_room_code', data.roomCode);
+          if (roomBadge && roomCodeText) {
+            roomBadge.style.display = 'inline-block';
+            roomCodeText.textContent = data.roomCode.toUpperCase();
+          }
+          if (data.roomCode !== 'default') {
+            const url = new URL(window.location.href);
+            url.searchParams.set('room', data.roomCode);
+            window.history.replaceState({}, '', url.toString());
+          }
+        }
 
         isConnecting = false;
         joinOverlay.classList.add('hidden');
@@ -146,6 +182,8 @@ function connectToGame(name: string): void {
         isConnecting = false;
         if (data.code === 'ROOM_FULL') {
           showError('Room is full. Try again later.');
+        } else if (data.code === 'ROOM_NOT_FOUND') {
+          showError(data.message || 'Room code not found.');
         } else {
           showError(data.message || 'Failed to join chamber.');
         }
@@ -246,7 +284,7 @@ function connectToGame(name: string): void {
         reconnectTimer = window.setTimeout(() => {
           reconnectTimer = null;
           if (localPlayerName) {
-            connectToGame(localPlayerName);
+            connectToGame(localPlayerName, currentRoomCode || undefined, false);
           }
         }, 2000);
       }
@@ -263,20 +301,61 @@ function connectToGame(name: string): void {
 // Handle Form Submission for Join Game
 joinForm.addEventListener('submit', (e) => {
   e.preventDefault();
-  const raw = playerNameInput.value || '';
-  const trimmed = raw.trim();
+  const rawName = playerNameInput.value || '';
+  const trimmedName = rawName.trim();
+  const rawRoom = roomCodeInput ? roomCodeInput.value.trim().toUpperCase() : '';
 
-  if (!trimmed) {
+  if (!trimmedName) {
     showError('Please enter your name before joining.');
     return;
   }
-  if (trimmed.length > 16) {
+  if (trimmedName.length > 16) {
     showError('Name cannot exceed 16 characters.');
     return;
   }
 
-  connectToGame(trimmed);
+  connectToGame(trimmedName, rawRoom || undefined, false);
 });
+
+// Handle "New Private Room" Button Click
+if (createRoomBtn) {
+  createRoomBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    const rawName = playerNameInput.value || '';
+    const trimmedName = rawName.trim();
+
+    if (!trimmedName) {
+      showError('Please enter your prisoner name first.');
+      return;
+    }
+    if (trimmedName.length > 16) {
+      showError('Name cannot exceed 16 characters.');
+      return;
+    }
+
+    // Explicit room creation: clear resume token
+    localResumeToken = '';
+    sessionStorage.removeItem('pit_resume_token');
+    connectToGame(trimmedName, undefined, true);
+  });
+}
+
+// Handle Room Code Badge Click to Copy Invite Link
+if (roomBadge) {
+  roomBadge.addEventListener('click', () => {
+    if (currentRoomCode && currentRoomCode !== 'default') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('room', currentRoomCode);
+      navigator.clipboard.writeText(url.toString()).then(() => {
+        const origText = roomBadge.innerHTML;
+        roomBadge.innerHTML = 'COPIED LINK! ✔';
+        setTimeout(() => {
+          roomBadge.innerHTML = origText;
+        }, 1500);
+      }).catch(() => {});
+    }
+  });
+}
 
 // Send player input loop (30 FPS)
 setInterval(() => {

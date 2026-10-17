@@ -78,7 +78,11 @@ export class GameRenderer {
 
     // Camera targeting and smoothing
     const localPlayer = state.players.find(p => p.id === localPlayerId);
-    if (localPlayer) {
+    if (state.phase === 'PURGE') {
+      // Pan camera directly to the Overseer at upper-left during final purge
+      this.targetCameraX = 0;
+      this.targetCameraY = 0;
+    } else if (localPlayer) {
       this.targetCameraX = localPlayer.x - this.width / 2;
       this.targetCameraY = localPlayer.y - this.height * 0.55;
     } else {
@@ -370,6 +374,7 @@ export class GameRenderer {
   // ==========================================
   private drawUpperLeftHatchAndOverseer(ctx: CanvasRenderingContext2D, state: GameState): void {
     const isOpen = state.phase === 'SIGNAL_ACTIVE';
+    const isPurge = state.phase === 'PURGE';
     const hatch = state.hatch;
 
     ctx.save();
@@ -379,7 +384,7 @@ export class GameRenderer {
     ctx.fillRect(0, hatch.y - 15, hatch.width + 45, hatch.height + 25);
 
     // Reinforced heavy steel hatch door frame
-    ctx.strokeStyle = isOpen ? '#22c55e' : '#7f1d1d';
+    ctx.strokeStyle = isPurge ? '#ef4444' : (isOpen ? '#22c55e' : '#7f1d1d');
     ctx.lineWidth = 6;
     ctx.strokeRect(hatch.x, hatch.y, hatch.width, hatch.height);
 
@@ -388,14 +393,20 @@ export class GameRenderer {
     ctx.fillRect(hatch.x + hatch.width - 10, hatch.y - 16, 18, 12);
 
     // Harsh volumetric cone of light casting across upper chamber
-    if (isOpen) {
+    if (isOpen || isPurge) {
       const cone = ctx.createRadialGradient(
         hatch.x + hatch.width, hatch.y + 10, 10,
         hatch.x + hatch.width + 300, hatch.y + 140, 450
       );
-      cone.addColorStop(0, 'rgba(34, 197, 94, 0.4)');
-      cone.addColorStop(0.5, 'rgba(34, 197, 94, 0.12)');
-      cone.addColorStop(1, 'rgba(34, 197, 94, 0.0)');
+      if (isPurge) {
+        cone.addColorStop(0, 'rgba(239, 68, 68, 0.45)');
+        cone.addColorStop(0.5, 'rgba(239, 68, 68, 0.15)');
+        cone.addColorStop(1, 'rgba(239, 68, 68, 0.0)');
+      } else {
+        cone.addColorStop(0, 'rgba(34, 197, 94, 0.4)');
+        cone.addColorStop(0.5, 'rgba(34, 197, 94, 0.12)');
+        cone.addColorStop(1, 'rgba(34, 197, 94, 0.0)');
+      }
 
       ctx.fillStyle = cone;
       ctx.beginPath();
@@ -412,36 +423,66 @@ export class GameRenderer {
     const overseerX = hatch.x + 35;
     const overseerY = hatch.y + 55;
 
-    // Dark shadowed human torso & arms
+    // Trenchcoat / Torso
     ctx.fillStyle = '#0a0d14';
-    // Body / Trenchcoat
-    ctx.fillRect(overseerX - 10, overseerY - 26, 20, 36);
+    ctx.fillRect(overseerX - 12, overseerY - 26, 24, 38);
+    // Shoulder tactical armor
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(overseerX - 14, overseerY - 24, 5, 12);
+    ctx.fillRect(overseerX + 9, overseerY - 24, 5, 12);
+
     // Head / Tactical Hood
+    ctx.fillStyle = '#0a0d14';
     ctx.beginPath();
-    ctx.arc(overseerX, overseerY - 33, 9, 0, Math.PI * 2);
+    ctx.arc(overseerX, overseerY - 33, 10, 0, Math.PI * 2);
     ctx.fill();
 
-    // Sniper rifle resting over the ledge aiming into the pit
+    // Glowing ocular optic / visor
+    ctx.fillStyle = (isOpen || isPurge) ? '#ef4444' : '#64748b';
+    ctx.fillRect(overseerX - 2, overseerY - 35, 7, 3);
+
+    // Heavy sniper rifle resting over the ledge aiming down into the pit
+    const muzzleX = overseerX + 38;
+    const muzzleY = overseerY + 4;
     ctx.strokeStyle = '#020617';
     ctx.lineWidth = 4;
     ctx.beginPath();
     ctx.moveTo(overseerX - 4, overseerY - 14);
-    ctx.lineTo(overseerX + 38, overseerY + 4);
+    ctx.lineTo(muzzleX, muzzleY);
     ctx.stroke();
 
     // Sniper Scope Optic with red glint
     ctx.fillStyle = '#0f172a';
     ctx.fillRect(overseerX + 8, overseerY - 10, 14, 5);
-    ctx.fillStyle = isOpen ? '#ef4444' : '#64748b';
+    ctx.fillStyle = (isOpen || isPurge) ? '#ef4444' : '#64748b';
     ctx.beginPath();
     ctx.arc(overseerX + 22, overseerY - 8, 2.5, 0, Math.PI * 2);
     ctx.fill();
 
-    // Label
-    ctx.fillStyle = isOpen ? '#86efac' : '#94a3b8';
-    ctx.font = 'bold 11px monospace';
+    // Red Laser Sight Targeting Beam into the pit when active or purging
+    if (isOpen || isPurge) {
+      ctx.strokeStyle = isPurge ? 'rgba(239, 68, 68, 0.75)' : 'rgba(239, 68, 68, 0.35)';
+      ctx.lineWidth = isPurge ? 1.5 : 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(muzzleX, muzzleY);
+      ctx.lineTo(muzzleX + 500, muzzleY + 420);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Label above overseer
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = 'bold 9px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('ESCAPE HATCH', hatch.x + hatch.width / 2, hatch.y + hatch.height + 18);
+    ctx.fillText('ANONYMOUS OVERSEER', overseerX, hatch.y - 4);
+
+    // Label below hatch with state
+    ctx.fillStyle = isPurge ? '#ef4444' : (isOpen ? '#86efac' : '#94a3b8');
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'center';
+    const hatchStatus = isPurge ? 'PURGE ACTIVE - DEADLY' : (isOpen ? 'HATCH: OPEN (QUOTA: 1)' : 'HATCH: SEALED');
+    ctx.fillText(hatchStatus, hatch.x + hatch.width / 2, hatch.y + hatch.height + 18);
 
     ctx.restore();
   }
@@ -1396,29 +1437,31 @@ export class GameRenderer {
     const secs = Math.floor(state.matchTimer % 60);
     const timeFormatted = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 
-    // Top Overseer Announcement Marquee Bar
+    // Top Overseer Announcement Marquee Bar (offset to X=180 to keep upper-left escape hatch & overseer clear)
+    const marqueeX = 180;
+    const marqueeW = this.width - marqueeX - 40;
     ctx.fillStyle = 'rgba(11, 13, 17, 0.92)';
-    ctx.fillRect(40, 48, this.width - 80, 36);
-    ctx.strokeStyle = state.phase === 'SIGNAL_ACTIVE' ? '#22c55e' : '#334155';
+    ctx.fillRect(marqueeX, 48, marqueeW, 36);
+    ctx.strokeStyle = state.phase === 'SIGNAL_ACTIVE' ? '#22c55e' : (state.phase === 'PURGE' ? '#ef4444' : '#334155');
     ctx.lineWidth = 1.5;
-    ctx.strokeRect(40, 48, this.width - 80, 36);
+    ctx.strokeRect(marqueeX, 48, marqueeW, 36);
 
     ctx.textAlign = 'center';
-    ctx.fillStyle = state.phase === 'SIGNAL_ACTIVE' ? '#86efac' : '#f8fafc';
+    ctx.fillStyle = state.phase === 'SIGNAL_ACTIVE' ? '#86efac' : (state.phase === 'PURGE' ? '#fca5a5' : '#f8fafc');
     ctx.font = 'bold 13px monospace';
-    ctx.fillText(state.announcementText, this.width / 2, 71);
+    ctx.fillText(state.announcementText, marqueeX + marqueeW / 2, 71);
 
-    // 10-Minute Clock & Remaining Prisoners (Top Left)
+    // 10-Minute Clock & Remaining Prisoners (Top Left, placed right under announcement bar at X=185)
     ctx.textAlign = 'left';
     if (state.phase === 'LOBBY') {
       ctx.fillStyle = '#38bdf8';
       ctx.font = 'bold 18px monospace';
-      ctx.fillText(`LOBBY: ${state.players.length}/${state.maxPlayers || 10} PRISONERS`, 45, 115);
+      ctx.fillText(`LOBBY: ${state.players.length}/${state.maxPlayers || 10} PRISONERS`, 185, 115);
 
       const playerNames = state.players.map(p => p.name).join(', ');
       ctx.fillStyle = '#94a3b8';
       ctx.font = '11px monospace';
-      ctx.fillText(`CONNECTED: ${playerNames || 'None'}`, 45, 134);
+      ctx.fillText(`CONNECTED: ${playerNames || 'None'}`, 185, 134);
 
       if (state.lobbyCountdown > 0) {
         ctx.textAlign = 'right';
@@ -1427,14 +1470,15 @@ export class GameRenderer {
         ctx.fillText(`STARTING IN: ${state.lobbyCountdown}s`, this.width - 45, 115);
       }
     } else {
-      ctx.fillStyle = state.matchTimer < 120 ? '#ef4444' : '#f8fafc';
+      ctx.fillStyle = state.phase === 'PURGE' ? '#ef4444' : (state.matchTimer < 120 ? '#ef4444' : '#f8fafc');
       ctx.font = 'bold 20px monospace';
-      ctx.fillText(`⏱️ ${timeFormatted}`, 45, 115);
+      const clockPrefix = state.phase === 'PURGE' ? '💀 PURGE: ' : '⏱️ ';
+      ctx.fillText(`${clockPrefix}${timeFormatted}`, 185, 115);
 
       const livingInPit = state.players.filter(p => !p.hasEscaped && p.state !== 'DEAD').length;
       ctx.fillStyle = '#38bdf8';
       ctx.font = '12px monospace';
-      ctx.fillText(`PRISONERS TRAPPED: ${livingInPit}`, 45, 134);
+      ctx.fillText(`PRISONERS TRAPPED: ${livingInPit}`, 185, 134);
     }
 
     // Local Player Status (Top Right)

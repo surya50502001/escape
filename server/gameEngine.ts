@@ -120,9 +120,9 @@ function getPlayerLandingY(
   const playerRadius = 12;
   let bestY: number | null = null;
 
-  // Check maze walls (platforms and solid tops)
+  // Check maze walls (only intended walkable platforms)
   for (const w of walls) {
-    if (w.x > 0 && w.y === 0 && w.width === WORLD_WIDTH) continue; // Skip ceiling for landing
+    if (!w.isPlatform) continue;
     const surfaceY = w.y;
     // Player center is 15px above feet, check if px is over platform
     if (px >= w.x - playerRadius && px <= w.x + w.width + playerRadius) {
@@ -1068,6 +1068,7 @@ export class GameEngine {
       this.state.matchTimer = Math.max(0, Math.ceil(this.matchTimer));
       if (this.matchTimer <= 0) {
         this.triggerFinalPurge();
+        this.updatePlayersPhysics();
         this.flushSoundEvents();
         return;
       }
@@ -1204,19 +1205,24 @@ export class GameEngine {
         return;
       }
 
-      this.state.signalQuota = (livingInPit.length > 2 && Math.random() < 0.35) ? 2 : 1;
-      this.state.signalEscapedCount = 0;
-      this.signalWindowTimer = 18.0;
-      this.state.signalWindowRemaining = 18;
-      this.state.phase = 'SIGNAL_ACTIVE';
-
-      this.state.announcementText = this.state.signalQuota === 1
-        ? 'ANONYMOUS: "I WILL TAKE 1 PRISONER. IF TWO TOUCH THE HATCH, I FIRE."'
-        : 'ANONYMOUS: "I PERMIT 2 PRISONERS. CLIMB THE PIPE AND ESCAPE."';
-
-      this.emitSound({ type: 'ANNOUNCEMENT' });
-      this.emitSound({ type: 'CLANG' });
+      const quota = (livingInPit.length > 2 && Math.random() < 0.35) ? 2 : 1;
+      this.triggerSignalActive(quota, 18.0);
     }
+  }
+
+  public triggerSignalActive(quota: number = 1, duration: number = 18.0): void {
+    this.state.signalQuota = quota;
+    this.state.signalEscapedCount = 0;
+    this.signalWindowTimer = duration;
+    this.state.signalWindowRemaining = Math.max(0, Math.ceil(duration));
+    this.state.phase = 'SIGNAL_ACTIVE';
+
+    this.state.announcementText = quota === 1
+      ? 'ANONYMOUS: "I WILL TAKE 1 PRISONER. IF TWO TOUCH THE HATCH, I FIRE."'
+      : 'ANONYMOUS: "I PERMIT 2 PRISONERS. CLIMB THE PIPE AND ESCAPE."';
+
+    this.emitSound({ type: 'ANNOUNCEMENT' });
+    this.emitSound({ type: 'CLANG' });
   }
 
   private updateSignalActivePhase(): void {
@@ -1512,7 +1518,39 @@ export class GameEngine {
     const barrier = this.state.obstacles.find(o => o.type === 'MOVING_BARRIER');
 
     for (const p of this.state.players) {
-      if (p.state === 'DEAD' || p.hasEscaped) continue;
+      if (p.hasEscaped) continue;
+
+      if (p.state === 'DEAD') {
+        // Corpses in mid-air experience gravity until landing on floor or platform
+        if (!p.isGrounded) {
+          p.vy += GRAVITY * DT;
+          p.y += p.vy * DT;
+          const landingY = getPlayerLandingY(p.x, p.y, p.vy, MAZE_WALLS, this.state.obstacles, this.state.ladders);
+          if (landingY !== null && p.vy > 0) {
+            p.y = landingY;
+            p.vy = 0;
+            p.vx = 0;
+            p.isGrounded = true;
+            this.emitSound({ type: 'FALL_IMPACT', x: p.x, y: p.y });
+          } else {
+            const floorY = getNearestFloorY(p.x, p.y);
+            if (p.y >= floorY && p.vy > 0) {
+              p.y = floorY;
+              p.vy = 0;
+              p.vx = 0;
+              p.isGrounded = true;
+              this.emitSound({ type: 'FALL_IMPACT', x: p.x, y: p.y });
+            } else if (p.y >= LOWER_FLOOR_Y && p.x >= BASEMENT_ENTRY_X) {
+              p.y = LOWER_FLOOR_Y;
+              p.vy = 0;
+              p.vx = 0;
+              p.isGrounded = true;
+              this.emitSound({ type: 'FALL_IMPACT', x: p.x, y: p.y });
+            }
+          }
+        }
+        continue;
+      }
 
       if (p.stamina < 100 && !p.climbGrabbingId) p.stamina = Math.min(100, p.stamina + 20 * DT);
       if (p.tackleCooldown > 0) p.tackleCooldown -= DT;
@@ -1593,7 +1631,6 @@ export class GameEngine {
           p.state = p.stunnedTimer > 0 ? 'STUNNED' : 'ON_FLOOR';
           this.emitSound({ type: 'FALL_IMPACT', x: p.x, y: p.y });
         }
-
       } else if (p.state === 'ON_FLOOR') {
         p.x += p.vx * DT;
 
@@ -1732,10 +1769,19 @@ export class GameEngine {
 
       // ── SOLID WALL HORIZONTAL COLLISION ──────────────────────────────────
       if (p.state === 'ON_FLOOR' || p.state === 'FALLING' || p.state === 'STUNNED') {
+        const prevX = p.x;
         p.x = resolveHorizontalWallCollision(p.x, p.y, 14, MAZE_WALLS);
+        if (p.x !== prevX) {
+          // Pushed right (p.x > prevX) while moving left -> stop leftward velocity
+          if (p.x > prevX && p.vx < 0) p.vx = 0;
+          // Pushed left (p.x < prevX) while moving right -> stop rightward velocity
+          if (p.x < prevX && p.vx > 0) p.vx = 0;
+        }
       }
 
       // ── WORLD BOUNDS ─────────────────────────────────────────────────────
+      if (p.x <= 35 && p.vx < 0) p.vx = 0;
+      if (p.x >= WORLD_WIDTH - 35 && p.vx > 0) p.vx = 0;
       p.x = Math.max(35, Math.min(WORLD_WIDTH - 35, p.x));
       p.y = Math.max(35, Math.min(LOWER_FLOOR_Y + 10, p.y));
 
@@ -1756,7 +1802,12 @@ export class GameEngine {
     }
   }
 
-  private triggerFinalPurge(): void {
+  public setMatchTimer(seconds: number): void {
+    this.matchTimer = Math.max(0, seconds);
+    this.state.matchTimer = Math.max(0, Math.ceil(seconds));
+  }
+
+  public triggerFinalPurge(): void {
     this.state.phase = 'PURGE';
     this.signalWindowTimer = 5.0;
     this.state.announcementText = 'OVERSEER: "10 MINUTES HAVE ELAPSED. PURGE THE PIT! NO SURVIVORS!"';
@@ -1769,11 +1820,12 @@ export class GameEngine {
     }
   }
 
-  private snipePlayer(player: Player, reason: 'QUOTA_VIOLATED' | 'CRASH_PURGE'): void {
+  public snipePlayer(player: Player, reason: 'QUOTA_VIOLATED' | 'CRASH_PURGE'): void {
     if (player.state === 'DEAD' || player.hasEscaped) return;
 
     player.health = 0;
     player.state = 'DEAD';
+    player.isGrounded = false;
     player.vy = 400;
 
     if (player.carryingLadderId) {
@@ -1786,8 +1838,8 @@ export class GameEngine {
     this.state.recentShots.push({
       id: `shot_${Date.now()}_${Math.random()}`,
       targetId: player.id,
-      fromX: HATCH_ZONE.x + 30,
-      fromY: HATCH_ZONE.y + 40,
+      fromX: HATCH_ZONE.x + 73,
+      fromY: HATCH_ZONE.y + 59,
       toX: player.x,
       toY: player.y,
       reason,
