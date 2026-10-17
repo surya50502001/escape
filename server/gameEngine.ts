@@ -4,7 +4,9 @@ import {
   MAX_PLAYERS, WORLD_WIDTH, WORLD_HEIGHT, FLOOR_Y, LOWER_FLOOR_Y,
   V_PIPE_X, V_PIPE_TOP_Y, H_PIPE_Y, H_PIPE_EXIT_X,
   DORM_LEDGE_Y, DORM_LEFT_X, DORM_RIGHT_X,
-  MAINT_ROOM_LEFT_X, SPAWN_LEFT_X, SPAWN_RIGHT_X
+  MAINT_ROOM_LEFT_X, SPAWN_LEFT_X, SPAWN_RIGHT_X,
+  SHAFT_LEFT_X, SHAFT_RIGHT_X, BASEMENT_ENTRY_X,
+  MAINT_UPPER_LEDGE_Y, MAINT_UPPER_LEDGE_X, MAINT_UPPER_LEDGE_W
 } from './types.js';
 
 export type { WallRect };
@@ -18,8 +20,10 @@ export const HATCH_ZONE: HatchZone = { x: 40, y: 40, width: 90, height: 90 };
  * One is in the maintenance room, one is in storage area right of main floor.
  */
 export const INITIAL_LADDER_POSITIONS: Array<{ id: string; x: number; y: number; height: number }> = [
-  { id: 'ladder_maint',   x: 160,  y: FLOOR_Y - 90, height: 90 },  // Maintenance room
-  { id: 'ladder_storage', x: 1350, y: FLOOR_Y - 90, height: 90 },  // Storage area right of main floor
+  // Route A: maintenance room ladder — base on main floor, top reaches MAINT_UPPER_LEDGE_Y
+  { id: 'ladder_maint',   x: 200,  y: MAINT_UPPER_LEDGE_Y, height: FLOOR_Y - MAINT_UPPER_LEDGE_Y },
+  // General-use ladder in storage area right of main floor
+  { id: 'ladder_storage', x: 1320, y: FLOOR_Y - 90, height: 90 },
 ];
 
 /**
@@ -27,13 +31,12 @@ export const INITIAL_LADDER_POSITIONS: Array<{ id: string; x: number; y: number;
  * (SPIKES and STEAM_VENT removed — not exploration-meaningful)
  */
 export const INITIAL_OBSTACLES: Obstacle[] = [
-  // Moving security gate in service corridor
   {
     id: 'moving_barrier',
     type: 'MOVING_BARRIER',
-    x: 1490,
+    x: 1250,
     y: 516,
-    width: 16,
+    width: 18,
     height: 80,
     state: 'ACTIVE',
     timer: 0,
@@ -96,9 +99,9 @@ const HUMAN_COLORS = [
 
 /** Maximum Y a player can stand at (main floor or platform) without being in the basement */
 function getNearestFloorY(px: number, _py: number): number {
-  // Check if player is in the shaft gap between 2200-2400
-  if (px >= 2200 && px <= 2400) {
-    return LOWER_FLOOR_Y; // Falls through to basement
+  // Shaft gap: players fall through to basement
+  if (px >= SHAFT_LEFT_X && px <= SHAFT_RIGHT_X) {
+    return LOWER_FLOOR_Y;
   }
   return FLOOR_Y;
 }
@@ -623,35 +626,60 @@ export class GameEngine {
   public validateLadderPlacement(ladder: Ladder): boolean {
     const baseY = ladder.y + ladder.height;
     const topY = ladder.y;
+    const lx = ladder.x;
 
-    // Base must be near a floor surface (within 30px)
-    const isOnMainFloor = baseY >= FLOOR_Y - 10 && baseY <= FLOOR_Y + 30;
-    let isOnPlatform = false;
-    for (const wall of MAZE_WALLS) {
-      if (!wall.isPlatform && !wall.solid) continue;
-      const wallBaseY = wall.y;
-      if (Math.abs(baseY - wallBaseY) < 25 && 
-          ladder.x >= wall.x - 30 && 
-          ladder.x <= wall.x + wall.width + 30) {
-        isOnPlatform = true;
-        break;
+    // Base must rest on a valid surface
+    let baseValid = false;
+    const floorSurfaces = [FLOOR_Y, LOWER_FLOOR_Y];
+    for (const fy of floorSurfaces) {
+      if (baseY >= fy - 10 && baseY <= fy + 30) { baseValid = true; break; }
+    }
+    if (!baseValid) {
+      for (const wall of MAZE_WALLS) {
+        if (!wall.isPlatform && !wall.solid) continue;
+        if (Math.abs(baseY - wall.y) < 25 &&
+            lx >= wall.x - 30 && lx <= wall.x + wall.width + 30) {
+          baseValid = true;
+          break;
+        }
       }
     }
-
-    const baseValid = isOnMainFloor || isOnPlatform;
     if (!baseValid) return false;
 
-    // Ladder must not clip through solid walls horizontally
+    // Ladder must not be placed inside a solid wall (skip world boundary walls)
     for (const wall of MAZE_WALLS) {
       if (!wall.solid) continue;
-      if (ladder.x + 10 > wall.x && ladder.x - 10 < wall.x + wall.width) {
-        if (topY < wall.y + wall.height && baseY > wall.y) {
-          return false; // Clips through solid wall
+      if (wall.width >= WORLD_WIDTH - 10 || wall.height >= WORLD_HEIGHT - 10) continue;
+      if (wall.width <= 30 && wall.x <= 30) continue; // left boundary
+      if (wall.width <= 30 && wall.x >= WORLD_WIDTH - 60) continue; // right boundary
+      const overlapX = lx + 10 > wall.x && lx - 10 < wall.x + wall.width;
+      const overlapY = topY < wall.y + wall.height && baseY > wall.y;
+      if (overlapX && overlapY) return false;
+    }
+
+    // Top must be near a usable surface or ceiling pipe
+    let topNearSurface = topY <= H_PIPE_Y + 60;
+    if (!topNearSurface) {
+      for (const wall of MAZE_WALLS) {
+        if (!wall.isPlatform && !wall.solid) continue;
+        if (Math.abs(topY - wall.y) < 60 &&
+            lx >= wall.x - 30 && lx <= wall.x + wall.width + 30) {
+          topNearSurface = true;
+          break;
+        }
+      }
+    }
+    // Valid if base is on a floor and top is above it by at least 40px
+    if (!topNearSurface) {
+      for (const fy of floorSurfaces) {
+        if (baseY >= fy - 10 && baseY <= fy + 30 && topY < fy - 40) {
+          topNearSurface = true;
+          break;
         }
       }
     }
 
-    return true;
+    return topNearSurface;
   }
 
   /**
@@ -1349,9 +1377,7 @@ export class GameEngine {
 
   /** Find the nearest floor surface below a given world coordinate */
   private getNearestFloorBelow(worldX: number, worldY: number): number {
-    // Check if in the pit gap
-    if (worldX >= 2200 && worldX <= 2400) return LOWER_FLOOR_Y;
-    // Check platforms
+    if (worldX >= SHAFT_LEFT_X && worldX <= SHAFT_RIGHT_X) return LOWER_FLOOR_Y;
     let nearestY = FLOOR_Y;
     for (const wall of MAZE_WALLS) {
       if (!wall.isPlatform && !wall.solid) continue;
@@ -1531,8 +1557,8 @@ export class GameEngine {
           this.emitSound({ type: 'FALL_IMPACT', x: p.x, y: p.y });
         }
 
-        // Lower basement floor
-        if (p.y >= LOWER_FLOOR_Y) {
+        // Lower basement floor — only accessible in basement x range
+        if (p.y >= LOWER_FLOOR_Y && p.x >= BASEMENT_ENTRY_X) {
           p.y = LOWER_FLOOR_Y;
           p.vy = 0;
           p.vx = 0;
@@ -1587,6 +1613,16 @@ export class GameEngine {
       } else if (p.state === 'CLIMBING_V_PIPE') {
         p.y += p.vy * DT;
         p.x = V_PIPE_X;
+        if (p.y <= V_PIPE_TOP_Y + 15) {
+          p.state = 'HANGING_H_PIPE';
+          p.y = H_PIPE_Y + 15;
+          p.vy = 0;
+        } else if (p.y >= FLOOR_Y) {
+          p.y = FLOOR_Y;
+          p.state = 'ON_FLOOR';
+          p.isGrounded = true;
+          p.vy = 0;
+        }
         if (p.climbGrabbingId) {
           const victim = this.state.players.find(x => x.id === p.climbGrabbingId);
           if (victim) {
@@ -1632,6 +1668,7 @@ export class GameEngine {
 
       // ── WORLD BOUNDS ─────────────────────────────────────────────────────
       p.x = Math.max(35, Math.min(WORLD_WIDTH - 35, p.x));
+      p.y = Math.max(35, Math.min(LOWER_FLOOR_Y + 10, p.y));
 
       // ── MELEE TACKLE COLLISION ───────────────────────────────────────────
       if (p.stunnedTimer > 0 && p.vx !== 0 && p.state === 'ON_FLOOR') {

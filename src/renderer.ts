@@ -4,6 +4,8 @@ import {
   V_PIPE_X, V_PIPE_TOP_Y, H_PIPE_Y, H_PIPE_EXIT_X,
   DORM_LEDGE_Y, DORM_LEFT_X, DORM_RIGHT_X,
   MAINT_ROOM_LEFT_X, MAINT_ROOM_RIGHT_X,
+  MAINT_UPPER_LEDGE_Y, MAINT_UPPER_LEDGE_X, MAINT_UPPER_LEDGE_W,
+  SHAFT_LEFT_X, SHAFT_RIGHT_X, BASEMENT_ENTRY_X,
   MAZE_WALLS, WallRect
 } from '../server/types.js';
 
@@ -168,46 +170,36 @@ export class GameRenderer {
   // ==========================================
   // 1. 2D SIDE-VIEW INDUSTRIAL CHAMBER & MAZE
   // ==========================================
-  private drawChamberEnvironment(ctx: CanvasRenderingContext2D, state: GameState): void {
-    // 1. Deep underground bedrock & stone foundation back wall across full 3000x1400 world
+  private drawChamberEnvironment(ctx: CanvasRenderingContext2D, _state: GameState): void {
+    // Background bedrock
     ctx.fillStyle = '#07080c';
     ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
-    // 2. Concrete masonry panel seams across entire world
+    // Concrete masonry seams
     ctx.strokeStyle = '#11141c';
     ctx.lineWidth = 1.5;
     for (let x = 0; x < WORLD_WIDTH; x += 120) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, WORLD_HEIGHT);
-      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, WORLD_HEIGHT); ctx.stroke();
     }
     for (let y = 0; y < WORLD_HEIGHT; y += 90) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(WORLD_WIDTH, y);
-      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(WORLD_WIDTH, y); ctx.stroke();
     }
 
-    // 3. Water seepage, grime, and rust stains dripping down walls in varied sections
+    // Water seepage stains
     ctx.fillStyle = 'rgba(15, 23, 42, 0.45)';
     ctx.fillRect(350, 0, 40, FLOOR_Y);
     ctx.fillRect(720, 0, 30, FLOOR_Y);
     ctx.fillRect(1350, 0, 35, FLOOR_Y);
     ctx.fillRect(1950, 0, 45, FLOOR_Y);
-    ctx.fillRect(2300, FLOOR_Y, 60, LOWER_FLOOR_Y - FLOOR_Y); // Shaft slime
     ctx.fillRect(2700, 0, 35, LOWER_FLOOR_Y);
 
-    // 4. Draw Maze Walls and Platforms from MAZE_WALLS
+    // Draw MAZE_WALLS
     for (const wall of MAZE_WALLS) {
       if (wall.isPlatform) {
-        // Steel grated catwalk / platform
         ctx.fillStyle = '#1e293b';
         ctx.fillRect(wall.x, wall.y, wall.width, wall.height);
-        // Metal tread top surface
         ctx.fillStyle = '#475569';
         ctx.fillRect(wall.x, wall.y, wall.width, 3);
-        // Grate pattern
         ctx.strokeStyle = '#334155';
         ctx.lineWidth = 1;
         for (let gx = wall.x + 8; gx < wall.x + wall.width; gx += 14) {
@@ -216,22 +208,16 @@ export class GameRenderer {
           ctx.lineTo(gx - 5, wall.y + wall.height - 1);
           ctx.stroke();
         }
-        // Support brackets underneath
         ctx.fillStyle = '#0f172a';
         ctx.fillRect(wall.x + 6, wall.y + wall.height, 8, 12);
         ctx.fillRect(wall.x + wall.width - 14, wall.y + wall.height, 8, 12);
       } else {
-        // Heavy solid reinforced concrete block
         ctx.fillStyle = '#141720';
         ctx.fillRect(wall.x, wall.y, wall.width, wall.height);
-
-        // Dark block border
         ctx.strokeStyle = '#090b10';
         ctx.lineWidth = 2;
         ctx.strokeRect(wall.x, wall.y, wall.width, wall.height);
-
-        // Top curb highlight for floor surfaces
-        if (wall.width > 50 && (wall.y === FLOOR_Y || wall.y === LOWER_FLOOR_Y || wall.y === 400 || wall.y === 500)) {
+        if (wall.width > 50 && (wall.y === FLOOR_Y || wall.y === LOWER_FLOOR_Y)) {
           ctx.fillStyle = '#2d3340';
           ctx.fillRect(wall.x, wall.y - 3, wall.width, 4);
           ctx.fillStyle = '#475569';
@@ -240,79 +226,65 @@ export class GameRenderer {
       }
     }
 
-    // 5. Section Labels & Atmospheric Details
-
-    // Maintenance Room (x: 30..380, y: 400..620)
+    // ── MAINTENANCE ROOM label & props (X=30–420)
     ctx.fillStyle = '#161d2a';
-    ctx.fillRect(60, 480, 50, 90); // Tool cabinet silhouette
-    ctx.fillRect(130, 500, 60, 70); // Metal locker silhouette
+    ctx.fillRect(60, MAINT_UPPER_LEDGE_Y + 20, 50, 90);
+    ctx.fillRect(130, MAINT_UPPER_LEDGE_Y + 40, 60, 70);
     ctx.fillStyle = '#243042';
-    ctx.fillRect(70, 510, 8, 2); // Locker handles
-    ctx.fillRect(140, 520, 8, 2);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.16)';
+    ctx.fillRect(70, MAINT_UPPER_LEDGE_Y + 50, 8, 2);
+    ctx.fillRect(140, MAINT_UPPER_LEDGE_Y + 60, 8, 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.16)';
     ctx.font = 'bold 11px monospace';
     ctx.textAlign = 'left';
-    ctx.fillText('SECTOR 1-A // WORKSHOP & LADDER STORAGE', 50, 435);
+    ctx.fillText('SECTOR 1-A // WORKSHOP & LADDER STORAGE', 50, MAINT_UPPER_LEDGE_Y - 8);
 
-    // Upper Dormitory Ledge (x: 600..1100, y: 360)
+    // ── DORMITORY label & bunk beds (X=580–1080, Y=200–360)
     ctx.fillStyle = '#141824';
-    // Bunk bed frames along the back wall
-    for (let bx = 640; bx < 1040; bx += 90) {
-      ctx.fillRect(bx, 280, 60, 78); // Bed outer frame
+    for (let bx = DORM_LEFT_X + 60; bx < DORM_RIGHT_X - 40; bx += 90) {
+      ctx.fillRect(bx, 220, 60, 78);
       ctx.fillStyle = '#0b0d14';
-      ctx.fillRect(bx + 4, 286, 52, 30); // Top bunk void
-      ctx.fillRect(bx + 4, 324, 52, 30); // Bottom bunk void
+      ctx.fillRect(bx + 4, 226, 52, 30);
+      ctx.fillRect(bx + 4, 264, 52, 30);
       ctx.fillStyle = '#141824';
     }
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
     ctx.font = 'bold 11px monospace';
-    ctx.fillText('CELL BLOCK B // DORMITORY LEDGE [ELEVATION: 360]', 620, 350);
+    ctx.fillText('CELL BLOCK B // DORMITORY [ELEVATION: ' + DORM_LEDGE_Y + ']', DORM_LEFT_X + 20, DORM_LEDGE_Y - 8);
 
-    // Pit Shaft Floor Gap Caution Markings (x: 2200..2400 at main floor)
+    // ── SHAFT GAP hazard markings
     ctx.fillStyle = '#eab308';
-    // Diagonal hazard stripes on left edge
     for (let i = 0; i < 4; i++) {
       ctx.beginPath();
-      ctx.moveTo(2160 + i * 10, FLOOR_Y);
-      ctx.lineTo(2170 + i * 10, FLOOR_Y);
-      ctx.lineTo(2160 + i * 10, FLOOR_Y + 12);
-      ctx.lineTo(2150 + i * 10, FLOOR_Y + 12);
-      ctx.fill();
-    }
-    // Diagonal hazard stripes on right edge
-    for (let i = 0; i < 4; i++) {
-      ctx.beginPath();
-      ctx.moveTo(2400 + i * 10, FLOOR_Y);
-      ctx.lineTo(2410 + i * 10, FLOOR_Y);
-      ctx.lineTo(2400 + i * 10, FLOOR_Y + 12);
-      ctx.lineTo(2390 + i * 10, FLOOR_Y + 12);
+      ctx.moveTo(SHAFT_LEFT_X - 40 + i * 10, FLOOR_Y);
+      ctx.lineTo(SHAFT_LEFT_X - 30 + i * 10, FLOOR_Y);
+      ctx.lineTo(SHAFT_LEFT_X - 40 + i * 10, FLOOR_Y + 12);
+      ctx.lineTo(SHAFT_LEFT_X - 50 + i * 10, FLOOR_Y + 12);
       ctx.fill();
     }
     ctx.fillStyle = '#ef4444';
     ctx.font = 'bold 10px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('⚠ PIT SHAFT: 400px DROP ⚠', 2300, FLOOR_Y + 22);
+    ctx.fillText('⚠ SHAFT DROP ⚠', (SHAFT_LEFT_X + SHAFT_RIGHT_X) / 2, FLOOR_Y + 22);
 
-    // Lower Basement / Deep Runoff (y: 1020)
+    // ── BASEMENT area
     ctx.fillStyle = '#10131a';
-    ctx.fillRect(1600, LOWER_FLOOR_Y, WORLD_WIDTH - 1600, WORLD_HEIGHT - LOWER_FLOOR_Y);
-    // Support columns in deep basement
+    ctx.fillRect(BASEMENT_ENTRY_X, LOWER_FLOOR_Y, WORLD_WIDTH - BASEMENT_ENTRY_X, WORLD_HEIGHT - LOWER_FLOOR_Y);
     ctx.fillStyle = '#0b0d12';
-    for (let bx = 1660; bx < WORLD_WIDTH; bx += 180) {
+    for (let bx = BASEMENT_ENTRY_X + 60; bx < WORLD_WIDTH - 30; bx += 180) {
       ctx.fillRect(bx, LOWER_FLOOR_Y, 16, WORLD_HEIGHT - LOWER_FLOOR_Y);
     }
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
     ctx.font = 'bold 12px monospace';
     ctx.textAlign = 'left';
-    ctx.fillText('SUB-LEVEL 02 // PIT RUNOFF & SEWAGE DRAINAGE', 1650, LOWER_FLOOR_Y + 30);
+    ctx.fillText('SUB-LEVEL 02 // BASEMENT CORRIDOR', BASEMENT_ENTRY_X + 50, LOWER_FLOOR_Y + 30);
 
-    // Service Corridor (x: 1500..1800, y: 500..620)
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
+    // ── SERVICE CORRIDOR label
+    ctx.fillStyle = 'rgba(255,255,255,0.14)';
     ctx.font = 'bold 10px monospace';
-    ctx.fillText('SERVICE CORRIDOR // SLUICE GATE 04', 1520, 512);
+    ctx.fillText('SERVICE CORRIDOR // SLUICE GATE', 1220, 492);
 
-    // Main Spawn Area Stencil
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+    // ── MAIN FLOOR label
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
     ctx.font = 'bold 12px monospace';
     ctx.fillText('SECTOR 0 // COMMON DETENTION FLOOR', 450, FLOOR_Y + 28);
   }
