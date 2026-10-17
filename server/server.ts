@@ -266,43 +266,48 @@ export function handleClientDisconnect(ws: WebSocket, now: number = Date.now()):
   }
 }
 
-// Periodic Session Expiry Cleanup (every 5 seconds)
-setInterval(() => {
-  const now = Date.now();
-  for (const [token, session] of sessions.entries()) {
-    if (session.disconnectTime !== null && (now - session.disconnectTime > 60000)) {
-      // Reconnect window expired (60s): release player slot permanently
-      engine.removePlayer(session.playerId, true);
-      playerToSession.delete(session.playerId);
-      sessions.delete(token);
-    }
-  }
-}, 5000);
+const isMain = Boolean(process.argv[1] && (process.argv[1].endsWith('server.ts') || process.argv[1].endsWith('server.js')));
 
-// Authoritative Tick Loop at 30 FPS
-const TICK_INTERVAL_MS = 1000 / 30;
-
-setInterval(() => {
-  // Update Game State (advances physics, checks quota, flushes soundEvents)
-  engine.update();
-
-  // Broadcast state to all connected clients with backpressure protection
-  if (clients.size > 0) {
-    const payload = JSON.stringify({
-      type: 'SYNC',
-      state: engine.state
-    });
-
-    for (const [ws] of clients) {
-      if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 65536) {
-        ws.send(payload);
+if (isMain) {
+  // Periodic Session Expiry Cleanup (every 5 seconds)
+  setInterval(() => {
+    const now = Date.now();
+    for (const [token, session] of sessions.entries()) {
+      if (session.disconnectTime !== null && (now - session.disconnectTime > 60000)) {
+        // Reconnect window expired (60s): release player slot permanently
+        engine.removePlayer(session.playerId, true);
+        playerToSession.delete(session.playerId);
+        sessions.delete(token);
       }
     }
-  }
-}, TICK_INTERVAL_MS);
+  }, 5000);
 
-const PORT = Number(process.env.PORT) || 3001;
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[The Pit Server] Local: http://localhost:${PORT}`);
-  console.log(`[The Pit Server] LAN:   http://192.168.0.6:${PORT}`);
-});
+  // Authoritative Tick Loop at 30 FPS
+  const TICK_INTERVAL_MS = 1000 / 30;
+
+  setInterval(() => {
+    // Update Game State (advances physics, checks quota, flushes soundEvents)
+    engine.update();
+
+    // Broadcast state to all connected clients with backpressure protection
+    if (clients.size > 0) {
+      const payload = JSON.stringify({
+        type: 'SYNC',
+        state: engine.state
+      });
+
+      for (const [ws] of clients) {
+        if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 65536) {
+          ws.send(payload);
+        }
+      }
+    }
+  }, TICK_INTERVAL_MS);
+
+  const PORT = Number(process.env.PORT) || 3001;
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`[The Pit Server] Local: http://localhost:${PORT}`);
+    console.log(`[The Pit Server] LAN:   http://192.168.0.6:${PORT}`);
+  });
+}
+

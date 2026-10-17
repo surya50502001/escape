@@ -108,8 +108,10 @@ export class InputManager {
       this.rawClientX = e.clientX;
       this.rawClientY = e.clientY;
       const coords = clientToCanvasCoordinates(e.clientX, e.clientY, this.canvas);
-      this.mouseX = coords.x;
-      this.mouseY = coords.y;
+      const cameraX = (window as unknown as { cameraX?: number }).cameraX ?? 0;
+      const cameraY = (window as unknown as { cameraY?: number }).cameraY ?? 0;
+      this.mouseX = coords.x + cameraX;
+      this.mouseY = coords.y + cameraY;
 
       const px = (window as unknown as { localPlayerX?: number }).localPlayerX;
       const py = (window as unknown as { localPlayerY?: number }).localPlayerY;
@@ -144,8 +146,10 @@ export class InputManager {
     if (px !== undefined && py !== undefined) {
       if (this.rawClientX !== 0 || this.rawClientY !== 0) {
         const coords = clientToCanvasCoordinates(this.rawClientX, this.rawClientY, this.canvas);
-        this.mouseX = coords.x;
-        this.mouseY = coords.y;
+        const cameraX = (window as unknown as { cameraX?: number }).cameraX ?? 0;
+        const cameraY = (window as unknown as { cameraY?: number }).cameraY ?? 0;
+        this.mouseX = coords.x + cameraX;
+        this.mouseY = coords.y + cameraY;
       }
       this.input.aimAngle = Math.atan2(this.mouseY - py, this.mouseX - px);
     }

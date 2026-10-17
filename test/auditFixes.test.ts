@@ -433,47 +433,27 @@ describe('The Pit — Critical Gameplay Audit & Regression Tests', () => {
       assert.equal(segmentIntersectsRect(50, 50, 80, 80, boxA.x, boxA.y, boxA.width, boxA.height), false);
     });
 
-    it('spikes should inflict damage on controlled interval (hazardCooldown) and not damage repeatedly on adjacent frames', () => {
-      const spikes = engine.state.obstacles.find(o => o.type === 'SPIKES')!;
-      const p = engine.addHumanPlayer('p_spike_test', 'SpikeTester')!;
-
-      p.x = spikes.x + 20;
-      p.y = FLOOR_Y;
-      p.state = 'ON_FLOOR';
-      p.health = 100;
-
-      // First tick on spikes deals 15 damage
-      engine.update();
-      assert.equal(p.health, 85);
-      assert.ok(p.hazardCooldown > 0);
-
-      // Immediate next tick must not re-inflict damage
-      engine.update();
-      assert.equal(p.health, 85, 'Health must not decrease again during hazardCooldown');
-    });
-
-    it('falling player should land on catwalk and walk off edge into falling state', () => {
-      const catwalk = engine.state.obstacles.find(o => o.type === 'PLATFORM')!;
+    it('falling player should land on maze platform and walk off edge into falling state', () => {
       const p = engine.addHumanPlayer('p_catwalk', 'Walker')!;
 
-      // Position player falling above catwalk
-      p.x = catwalk.x + 50;
-      p.y = catwalk.y - 40;
+      // Position player falling above dormitory ledge platform (DORM_LEDGE_Y = 360)
+      p.x = 800;
+      p.y = 300;
       p.vy = 200;
       p.state = 'FALLING';
 
-      // Fall onto catwalk
-      for (let i = 0; i < 10; i++) {
+      // Fall onto platform
+      for (let i = 0; i < 15; i++) {
         engine.update();
         if (p.state === 'ON_FLOOR') break;
       }
 
-      assert.equal(p.y, catwalk.y);
+      assert.equal(p.y, 360);
       assert.equal(p.isGrounded, true);
       assert.equal(p.state, 'ON_FLOOR');
 
-      // Walk off right edge
-      p.x = catwalk.x + catwalk.width + 30;
+      // Walk off right edge (DORM_RIGHT_X = 1100)
+      p.x = 1150;
       engine.update();
 
       assert.equal(p.isGrounded, false);

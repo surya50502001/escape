@@ -224,6 +224,8 @@ function connectToGame(name: string): void {
               }
             } else if (ev.type === 'CLIMB_STRUGGLE') {
               sound.playStruggle();
+            } else if (ev.type === 'PICKUP' || ev.type === 'DROP') {
+              sound.playClang();
             }
           }
         }
@@ -292,6 +294,8 @@ setInterval(() => {
 function gameLoop() {
   if (latestState) {
     renderer.render(latestState, localPlayerId);
+    (window as unknown as { cameraX: number; cameraY: number }).cameraX = renderer.getCameraX();
+    (window as unknown as { cameraY: number }).cameraY = renderer.getCameraY();
   }
   requestAnimationFrame(gameLoop);
 }

@@ -1,4 +1,11 @@
-import { GameState, Player, Projectile, SniperShot, Rope, HatchZone, Obstacle, FallingRock, FLOOR_Y, V_PIPE_X, V_PIPE_TOP_Y, H_PIPE_Y, H_PIPE_EXIT_X } from '../server/types.js';
+import { 
+  GameState, Player, Projectile, SniperShot, Rope, HatchZone, Obstacle, FallingRock, Ladder,
+  FLOOR_Y, LOWER_FLOOR_Y, WORLD_WIDTH, WORLD_HEIGHT,
+  V_PIPE_X, V_PIPE_TOP_Y, H_PIPE_Y, H_PIPE_EXIT_X,
+  DORM_LEDGE_Y, DORM_LEFT_X, DORM_RIGHT_X,
+  MAINT_ROOM_LEFT_X, MAINT_ROOM_RIGHT_X,
+  MAZE_WALLS, WallRect
+} from '../server/types.js';
 
 interface Particle {
   x: number;
@@ -18,11 +25,26 @@ export class GameRenderer {
   private particles: Particle[] = [];
   private lastTime: number = performance.now();
 
+  // Scrolling camera following local player
+  public cameraX: number = 0;
+  public cameraY: number = 0;
+  private targetCameraX: number = 0;
+  private targetCameraY: number = 0;
+
   constructor(canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
     this.width = canvas.width;
     this.height = canvas.height;
   }
+
+  public getCameraX(): number {
+    return this.cameraX;
+  }
+
+  public getCameraY(): number {
+    return this.cameraY;
+  }
+
 
   public addBloodSparks(x: number, y: number, color: string = '#c0392b', count: number = 14): void {
     this.addSparks(x, y, color, count);
@@ -52,7 +74,35 @@ export class GameRenderer {
 
     const ctx = this.ctx;
 
-    // 1. Draw 2D Side-View Concrete & Rock Chamber
+    // Camera targeting and smoothing
+    const localPlayer = state.players.find(p => p.id === localPlayerId);
+    if (localPlayer) {
+      this.targetCameraX = localPlayer.x - this.width / 2;
+      this.targetCameraY = localPlayer.y - this.height * 0.55;
+    } else {
+      this.targetCameraX = 750 - this.width / 2;
+      this.targetCameraY = FLOOR_Y - this.height * 0.6;
+    }
+
+    this.targetCameraX = Math.max(0, Math.min(WORLD_WIDTH - this.width, this.targetCameraX));
+    this.targetCameraY = Math.max(0, Math.min(WORLD_HEIGHT - this.height, this.targetCameraY));
+
+    // Smooth lerp
+    const lerpSpeed = 0.08;
+    this.cameraX += (this.targetCameraX - this.cameraX) * lerpSpeed;
+    this.cameraY += (this.targetCameraY - this.cameraY) * lerpSpeed;
+    this.cameraX = Math.max(0, Math.min(WORLD_WIDTH - this.width, this.cameraX));
+    this.cameraY = Math.max(0, Math.min(WORLD_HEIGHT - this.height, this.cameraY));
+
+    // Clear canvas before drawing
+    ctx.fillStyle = '#06070a';
+    ctx.fillRect(0, 0, this.width, this.height);
+
+    // ── WORLD TRANSFORM (Camera Offset) ──────────────────────
+    ctx.save();
+    ctx.translate(-Math.round(this.cameraX), -Math.round(this.cameraY));
+
+    // 1. Draw 2D Side-View Concrete & Rock Chamber and Multi-level Maze Environment
     this.drawChamberEnvironment(ctx, state);
 
     // 2. Draw Continuous Traversal Pipes (Right Wall Vertical -> Ceiling Horizontal)
@@ -61,33 +111,38 @@ export class GameRenderer {
     // 3. Draw Escape Hatch & Overseer at Upper-Left
     this.drawUpperLeftHatchAndOverseer(ctx, state);
 
-    // 4. Draw Environmental Obstacles (Catwalk Platform, Spikes, Steam Vent, Moving Barrier)
+    // 4. Draw Obstacles (Moving Security Barrier)
     if (state.obstacles) {
       this.drawObstacles(ctx, state.obstacles);
     }
 
-    // 5. Draw Falling Rocks & Warning Hazards
+    // 5. Draw Ladders
+    if (state.ladders) {
+      this.drawLadders(ctx, state.ladders, localPlayerId, state.players);
+    }
+
+    // 6. Draw Falling Rocks & Warning Hazards
     if (state.fallingRocks) {
       this.drawFallingRocks(ctx, state.fallingRocks);
     }
 
-    // 6. Draw Particles (impact dust, blood, sparks)
+    // 7. Draw Particles (impact dust, blood, sparks)
     this.updateAndDrawParticles(ctx, dt);
 
-    // 7. Draw The Single Rope (on floor, thrown, or attached, plus aiming indicator)
+    // 8. Draw The Single Rope (on floor, thrown, or attached, plus aiming indicator)
     this.drawRope(ctx, state.rope, state.players, localPlayerId);
 
-    // 6. Draw Thrown Rocks
+    // 9. Draw Thrown Rocks
     this.drawProjectiles(ctx, state.projectiles);
 
-    // 7. Draw Dead Prisoners (on floor)
+    // 10. Draw Dead Prisoners
     for (const p of state.players) {
       if (p.state === 'DEAD') {
         this.drawDeadHuman(ctx, p);
       }
     }
 
-    // 8. Draw Living Human Prisoners
+    // 11. Draw Living Human Prisoners
     for (const p of state.players) {
       if (p.state !== 'DEAD' && !p.hasEscaped) {
         const isLocal = p.id === localPlayerId;
@@ -95,105 +150,171 @@ export class GameRenderer {
       }
     }
 
-    // 9. Draw Sniper Shots
+    // 12. Draw Sniper Shots
     this.drawSniperShots(ctx, state.recentShots);
 
-    // 10. Draw Clean Tactical HUD & Timers
+    ctx.restore();
+    // ── END WORLD TRANSFORM ──────────────────────────────────
+
+    // 13. Draw Clean Tactical HUD & Timers in Viewport Space
     this.drawHUD(ctx, state, localPlayerId);
 
-    // 11. Match Over Screen if completed
+    // 14. Match Over Screen if completed
     if (state.phase === 'MATCH_OVER') {
       this.drawMatchOverScreen(ctx, state);
     }
   }
 
   // ==========================================
-  // 1. 2D SIDE-VIEW INDUSTRIAL CHAMBER
+  // 1. 2D SIDE-VIEW INDUSTRIAL CHAMBER & MAZE
   // ==========================================
   private drawChamberEnvironment(ctx: CanvasRenderingContext2D, state: GameState): void {
-    // Deep underground dark stone / bedrock back wall
-    ctx.fillStyle = '#0b0d11';
-    ctx.fillRect(0, 0, this.width, this.height);
+    // 1. Deep underground bedrock & stone foundation back wall across full 3000x1400 world
+    ctx.fillStyle = '#07080c';
+    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
-    // Concrete slab panels on back wall with grime
-    ctx.strokeStyle = '#151921';
-    ctx.lineWidth = 2;
-    for (let x = 0; x < this.width; x += 120) {
+    // 2. Concrete masonry panel seams across entire world
+    ctx.strokeStyle = '#11141c';
+    ctx.lineWidth = 1.5;
+    for (let x = 0; x < WORLD_WIDTH; x += 120) {
       ctx.beginPath();
       ctx.moveTo(x, 0);
-      ctx.lineTo(x, FLOOR_Y);
+      ctx.lineTo(x, WORLD_HEIGHT);
       ctx.stroke();
     }
-    for (let y = 0; y < FLOOR_Y; y += 90) {
+    for (let y = 0; y < WORLD_HEIGHT; y += 90) {
       ctx.beginPath();
       ctx.moveTo(0, y);
-      ctx.lineTo(this.width, y);
+      ctx.lineTo(WORLD_WIDTH, y);
       ctx.stroke();
     }
 
-    // Water seepage and rust stains dripping down walls
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.4)';
+    // 3. Water seepage, grime, and rust stains dripping down walls in varied sections
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.45)';
     ctx.fillRect(350, 0, 40, FLOOR_Y);
     ctx.fillRect(720, 0, 30, FLOOR_Y);
+    ctx.fillRect(1350, 0, 35, FLOOR_Y);
+    ctx.fillRect(1950, 0, 45, FLOOR_Y);
+    ctx.fillRect(2300, FLOOR_Y, 60, LOWER_FLOOR_Y - FLOOR_Y); // Shaft slime
+    ctx.fillRect(2700, 0, 35, LOWER_FLOOR_Y);
 
-    // Vertical Iron Structural Beams along walls
-    ctx.fillStyle = '#1e2430';
-    ctx.fillRect(0, 0, 30, FLOOR_Y); // Left wall
-    ctx.fillRect(this.width - 30, 0, 30, FLOOR_Y); // Right wall
+    // 4. Draw Maze Walls and Platforms from MAZE_WALLS
+    for (const wall of MAZE_WALLS) {
+      if (wall.isPlatform) {
+        // Steel grated catwalk / platform
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(wall.x, wall.y, wall.width, wall.height);
+        // Metal tread top surface
+        ctx.fillStyle = '#475569';
+        ctx.fillRect(wall.x, wall.y, wall.width, 3);
+        // Grate pattern
+        ctx.strokeStyle = '#334155';
+        ctx.lineWidth = 1;
+        for (let gx = wall.x + 8; gx < wall.x + wall.width; gx += 14) {
+          ctx.beginPath();
+          ctx.moveTo(gx, wall.y + 3);
+          ctx.lineTo(gx - 5, wall.y + wall.height - 1);
+          ctx.stroke();
+        }
+        // Support brackets underneath
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(wall.x + 6, wall.y + wall.height, 8, 12);
+        ctx.fillRect(wall.x + wall.width - 14, wall.y + wall.height, 8, 12);
+      } else {
+        // Heavy solid reinforced concrete block
+        ctx.fillStyle = '#141720';
+        ctx.fillRect(wall.x, wall.y, wall.width, wall.height);
 
-    // Rivets on structural pillars
-    ctx.fillStyle = '#334155';
-    for (let y = 40; y < FLOOR_Y; y += 50) {
-      ctx.beginPath();
-      ctx.arc(15, y, 3, 0, Math.PI * 2);
-      ctx.arc(this.width - 15, y, 3, 0, Math.PI * 2);
-      ctx.fill();
+        // Dark block border
+        ctx.strokeStyle = '#090b10';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(wall.x, wall.y, wall.width, wall.height);
+
+        // Top curb highlight for floor surfaces
+        if (wall.width > 50 && (wall.y === FLOOR_Y || wall.y === LOWER_FLOOR_Y || wall.y === 400 || wall.y === 500)) {
+          ctx.fillStyle = '#2d3340';
+          ctx.fillRect(wall.x, wall.y - 3, wall.width, 4);
+          ctx.fillStyle = '#475569';
+          ctx.fillRect(wall.x, wall.y - 3, wall.width, 1.5);
+        }
+      }
     }
 
-    // Heavy Dirty Concrete Floor & Foundation (Basement)
-    ctx.fillStyle = '#181b22';
-    ctx.fillRect(0, FLOOR_Y, this.width, this.height - FLOOR_Y);
+    // 5. Section Labels & Atmospheric Details
 
-    // Foundation support girders / rebar columns in basement
-    ctx.fillStyle = '#12151c';
-    for (let bx = 60; bx < this.width; bx += 140) {
-      ctx.fillRect(bx, FLOOR_Y, 12, this.height - FLOOR_Y);
-      ctx.fillStyle = '#222733';
-      ctx.fillRect(bx + 4, FLOOR_Y + 12, 4, 4);
-      ctx.fillRect(bx + 4, FLOOR_Y + 36, 4, 4);
-      ctx.fillStyle = '#12151c';
-    }
-
-    // Concrete floor top curb with grunge
-    ctx.fillStyle = '#2d3340';
-    ctx.fillRect(0, FLOOR_Y - 4, this.width, 5);
-
-    // Curb metallic edge highlight
-    ctx.fillStyle = '#475569';
-    ctx.fillRect(0, FLOOR_Y - 4, this.width, 1.5);
-
-    // Basement Stencil Label
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+    // Maintenance Room (x: 30..380, y: 400..620)
+    ctx.fillStyle = '#161d2a';
+    ctx.fillRect(60, 480, 50, 90); // Tool cabinet silhouette
+    ctx.fillRect(130, 500, 60, 70); // Metal locker silhouette
+    ctx.fillStyle = '#243042';
+    ctx.fillRect(70, 510, 8, 2); // Locker handles
+    ctx.fillRect(140, 520, 8, 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.16)';
     ctx.font = 'bold 11px monospace';
     ctx.textAlign = 'left';
-    ctx.fillText('SUB-LEVEL 00 // DETENTION PIT BASEMENT', 40, FLOOR_Y + 28);
+    ctx.fillText('SECTOR 1-A // WORKSHOP & LADDER STORAGE', 50, 435);
 
-    // Cracks in the concrete floor
-    ctx.strokeStyle = '#0d0f14';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(220, FLOOR_Y); ctx.lineTo(245, FLOOR_Y + 15); ctx.lineTo(260, FLOOR_Y + 8);
-    ctx.moveTo(610, FLOOR_Y); ctx.lineTo(630, FLOOR_Y + 22);
-    ctx.stroke();
+    // Upper Dormitory Ledge (x: 600..1100, y: 360)
+    ctx.fillStyle = '#141824';
+    // Bunk bed frames along the back wall
+    for (let bx = 640; bx < 1040; bx += 90) {
+      ctx.fillRect(bx, 280, 60, 78); // Bed outer frame
+      ctx.fillStyle = '#0b0d14';
+      ctx.fillRect(bx + 4, 286, 52, 30); // Top bunk void
+      ctx.fillRect(bx + 4, 324, 52, 30); // Bottom bunk void
+      ctx.fillStyle = '#141824';
+    }
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('CELL BLOCK B // DORMITORY LEDGE [ELEVATION: 360]', 620, 350);
 
-    // Dark ambient shadow gradient from top and bottom
-    const shadowGrad = ctx.createLinearGradient(0, 0, 0, FLOOR_Y);
-    shadowGrad.addColorStop(0, 'rgba(0,0,0,0.75)');
-    shadowGrad.addColorStop(0.3, 'rgba(0,0,0,0.15)');
-    shadowGrad.addColorStop(0.85, 'rgba(0,0,0,0.15)');
-    shadowGrad.addColorStop(1, 'rgba(0,0,0,0.65)');
-    ctx.fillStyle = shadowGrad;
-    ctx.fillRect(0, 0, this.width, FLOOR_Y);
+    // Pit Shaft Floor Gap Caution Markings (x: 2200..2400 at main floor)
+    ctx.fillStyle = '#eab308';
+    // Diagonal hazard stripes on left edge
+    for (let i = 0; i < 4; i++) {
+      ctx.beginPath();
+      ctx.moveTo(2160 + i * 10, FLOOR_Y);
+      ctx.lineTo(2170 + i * 10, FLOOR_Y);
+      ctx.lineTo(2160 + i * 10, FLOOR_Y + 12);
+      ctx.lineTo(2150 + i * 10, FLOOR_Y + 12);
+      ctx.fill();
+    }
+    // Diagonal hazard stripes on right edge
+    for (let i = 0; i < 4; i++) {
+      ctx.beginPath();
+      ctx.moveTo(2400 + i * 10, FLOOR_Y);
+      ctx.lineTo(2410 + i * 10, FLOOR_Y);
+      ctx.lineTo(2400 + i * 10, FLOOR_Y + 12);
+      ctx.lineTo(2390 + i * 10, FLOOR_Y + 12);
+      ctx.fill();
+    }
+    ctx.fillStyle = '#ef4444';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('⚠ PIT SHAFT: 400px DROP ⚠', 2300, FLOOR_Y + 22);
+
+    // Lower Basement / Deep Runoff (y: 1020)
+    ctx.fillStyle = '#10131a';
+    ctx.fillRect(1600, LOWER_FLOOR_Y, WORLD_WIDTH - 1600, WORLD_HEIGHT - LOWER_FLOOR_Y);
+    // Support columns in deep basement
+    ctx.fillStyle = '#0b0d12';
+    for (let bx = 1660; bx < WORLD_WIDTH; bx += 180) {
+      ctx.fillRect(bx, LOWER_FLOOR_Y, 16, WORLD_HEIGHT - LOWER_FLOOR_Y);
+    }
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('SUB-LEVEL 02 // PIT RUNOFF & SEWAGE DRAINAGE', 1650, LOWER_FLOOR_Y + 30);
+
+    // Service Corridor (x: 1500..1800, y: 500..620)
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText('SERVICE CORRIDOR // SLUICE GATE 04', 1520, 512);
+
+    // Main Spawn Area Stencil
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText('SECTOR 0 // COMMON DETENTION FLOOR', 450, FLOOR_Y + 28);
   }
 
   // ==========================================
@@ -356,23 +477,20 @@ export class GameRenderer {
   // ==========================================
   // 4. ENVIRONMENTAL OBSTACLES (CATWALK, SPIKES, STEAM, BARRIER)
   // ==========================================
+  // ==========================================
+  // 4. ENVIRONMENTAL OBSTACLES (MOVING BARRIER & PLATFORMS)
+  // ==========================================
   private drawObstacles(ctx: CanvasRenderingContext2D, obstacles: Obstacle[]): void {
     const time = performance.now() / 1000;
 
     for (const obs of obstacles) {
       ctx.save();
 
-      if (obs.type === 'PLATFORM' || (obs.type as string) === 'CATWALK_PLATFORM') {
-        // Heavy Industrial Steel Platform
-        // Platform Deck
+      if (obs.type === 'PLATFORM') {
         ctx.fillStyle = '#1e293b';
         ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
-
-        // Top Grate Surface (Metallic highlight)
         ctx.fillStyle = '#475569';
         ctx.fillRect(obs.x, obs.y, obs.width, 3);
-
-        // Grated diamond tread pattern
         ctx.strokeStyle = '#334155';
         ctx.lineWidth = 1;
         for (let gx = obs.x + 8; gx < obs.x + obs.width; gx += 12) {
@@ -381,147 +499,12 @@ export class GameRenderer {
           ctx.lineTo(gx - 6, obs.y + obs.height - 1);
           ctx.stroke();
         }
-
-        // Support Brackets below platform
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(obs.x + 8, obs.y + obs.height, 10, 16);
-        ctx.fillRect(obs.x + obs.width - 18, obs.y + obs.height, 10, 16);
-
-        // Diagonal Support Beams anchored downward
-        ctx.strokeStyle = '#334155';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(obs.x + 13, obs.y + obs.height + 16);
-        ctx.lineTo(obs.x + 35, obs.y + obs.height + 40);
-        ctx.moveTo(obs.x + obs.width - 13, obs.y + obs.height + 16);
-        ctx.lineTo(obs.x + obs.width - 35, obs.y + obs.height + 40);
-        ctx.stroke();
-
-        // Edge rivets
-        ctx.fillStyle = '#94a3b8';
-        ctx.fillRect(obs.x + 4, obs.y + 4, 3, 3);
-        ctx.fillRect(obs.x + obs.width - 7, obs.y + 4, 3, 3);
-
-      } else if (obs.type === 'SPIKES' || (obs.type as string) === 'SPIKE_HAZARD') {
-        // Jagged Metallic Spikes on Floor
-        const spikeCount = Math.floor(obs.width / 14);
-        const spikeW = obs.width / spikeCount;
-
-        // Base mounting bar
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(obs.x, obs.y + obs.height - 4, obs.width, 4);
-
-        for (let i = 0; i < spikeCount; i++) {
-          const sx = obs.x + i * spikeW;
-          const sy = obs.y + obs.height;
-          const tipX = sx + spikeW / 2;
-          const tipY = obs.y;
-
-          // Spike shadow / base
-          ctx.fillStyle = '#334155';
-          ctx.beginPath();
-          ctx.moveTo(sx, sy);
-          ctx.lineTo(tipX, tipY);
-          ctx.lineTo(sx + spikeW, sy);
-          ctx.closePath();
-          ctx.fill();
-
-          // Highlight edge on spike tip
-          ctx.strokeStyle = '#94a3b8';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(sx, sy);
-          ctx.lineTo(tipX, tipY);
-          ctx.stroke();
-
-          // Blood / gore stains on tips
-          ctx.fillStyle = '#7f1d1d';
-          ctx.beginPath();
-          ctx.moveTo(tipX - 2, tipY + 6);
-          ctx.lineTo(tipX, tipY);
-          ctx.lineTo(tipX + 2, tipY + 6);
-          ctx.closePath();
-          ctx.fill();
-        }
-
-        // Warning Hazard Sign
-        ctx.fillStyle = 'rgba(239, 68, 68, 0.4)';
-        ctx.font = 'bold 9px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText('⚠ LETHAL SPIKES ⚠', obs.x + obs.width / 2, obs.y - 6);
-
-      } else if (obs.type === 'STEAM_VENT') {
-        // Steam Vent Base Housing
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(obs.x - 4, obs.y + obs.height - 8, obs.width + 8, 8);
-        ctx.fillStyle = '#475569';
-        ctx.fillRect(obs.x, obs.y + obs.height - 14, obs.width, 6);
-
-        // Vent slots
-        ctx.fillStyle = '#090d16';
-        for (let vx = obs.x + 4; vx < obs.x + obs.width - 4; vx += 7) {
-          ctx.fillRect(vx, obs.y + obs.height - 12, 3, 5);
-        }
-
-        if (obs.state === 'WARNING') {
-          // Warning state: glowing heat indicator & amber wisps
-          const pulse = (Math.sin(time * 12) + 1) / 2;
-          ctx.fillStyle = `rgba(234, 179, 8, ${0.4 + pulse * 0.4})`;
-          ctx.fillRect(obs.x + 2, obs.y + obs.height - 16, obs.width - 4, 3);
-
-          // Subtle hiss vapor
-          ctx.fillStyle = `rgba(254, 240, 138, ${0.25 + pulse * 0.35})`;
-          ctx.beginPath();
-          ctx.arc(obs.x + obs.width / 2 + Math.sin(time * 8) * 6, obs.y + obs.height - 24, 8, 0, Math.PI * 2);
-          ctx.fill();
-
-          ctx.fillStyle = '#fde047';
-          ctx.font = 'bold 9px monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText('⚡ STEAM CHARGING', obs.x + obs.width / 2, obs.y - 10);
-
-        } else if (obs.state === 'ACTIVE') {
-          // ACTIVE: Violent High-Pressure Steam Jet blasting upwards
-          const plumeHeight = 145;
-          const jetGrad = ctx.createLinearGradient(0, obs.y + obs.height, 0, obs.y + obs.height - plumeHeight);
-          jetGrad.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
-          jetGrad.addColorStop(0.3, 'rgba(226, 232, 240, 0.75)');
-          jetGrad.addColorStop(0.7, 'rgba(203, 213, 225, 0.4)');
-          jetGrad.addColorStop(1, 'rgba(148, 163, 184, 0)');
-
-          ctx.fillStyle = jetGrad;
-          ctx.beginPath();
-          ctx.moveTo(obs.x + 2, obs.y + obs.height - 14);
-          ctx.lineTo(obs.x - 14, obs.y + obs.height - plumeHeight);
-          ctx.lineTo(obs.x + obs.width + 14, obs.y + obs.height - plumeHeight);
-          ctx.lineTo(obs.x + obs.width - 2, obs.y + obs.height - 14);
-          ctx.closePath();
-          ctx.fill();
-
-          // Steam turbulence billows
-          for (let b = 0; b < 4; b++) {
-            const by = obs.y + obs.height - 30 - b * 30;
-            const bx = obs.x + obs.width / 2 + Math.sin(time * 15 + b) * 12;
-            const radius = 12 + b * 6;
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
-            ctx.beginPath();
-            ctx.arc(bx, by, radius, 0, Math.PI * 2);
-            ctx.fill();
-          }
-
-          ctx.fillStyle = '#ef4444';
-          ctx.font = 'bold 10px monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText('♨ DANGER: SCALDING STEAM ♨', obs.x + obs.width / 2, obs.y + obs.height - plumeHeight - 8);
-        }
-
       } else if (obs.type === 'MOVING_BARRIER') {
-        // Heavy Hydraulic Security Sluice Gate
-        // Top Hydraulic Cylinder
+        // Heavy Hydraulic Security Sluice Gate in Service Corridor
         ctx.fillStyle = '#334155';
-        ctx.fillRect(obs.x + obs.width / 2 - 4, 0, 8, obs.y);
+        ctx.fillRect(obs.x + obs.width / 2 - 4, 500, 8, obs.y - 500);
         ctx.fillStyle = '#64748b';
-        ctx.fillRect(obs.x + obs.width / 2 - 2, obs.y - 12, 4, 12);
+        ctx.fillRect(obs.x + obs.width / 2 - 2, obs.y - 10, 4, 10);
 
         // Barrier Body
         ctx.fillStyle = '#1e293b';
@@ -557,6 +540,78 @@ export class GameRenderer {
         ctx.beginPath();
         ctx.arc(obs.x + obs.width / 2, obs.y + 6, 3.5, 0, Math.PI * 2);
         ctx.fill();
+      }
+
+      ctx.restore();
+    }
+  }
+
+  // ==========================================
+  // 4B. PHYSICAL LADDERS (PLACED IN WORLD)
+  // ==========================================
+  private drawLadders(ctx: CanvasRenderingContext2D, ladders: Ladder[], localPlayerId: string, players: Player[]): void {
+    const time = performance.now() / 1000;
+    const localPlayer = players.find(p => p.id === localPlayerId);
+
+    for (const ladder of ladders) {
+      if (ladder.state === 'CARRIED') continue; // Drawn attached to carrier
+
+      const lx = ladder.x;
+      const ly = ladder.y;
+      const lw = ladder.width || 20;
+      const lh = ladder.height || 90;
+      const halfW = lw / 2;
+
+      ctx.save();
+
+      // Drop shadow on wall/floor
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+      ctx.fillRect(lx - halfW + 3, ly + 3, lw, lh);
+
+      // Side Rails (Heavy steel / reinforced alloy)
+      const railGrad = ctx.createLinearGradient(lx - halfW, 0, lx + halfW, 0);
+      railGrad.addColorStop(0, '#334155');
+      railGrad.addColorStop(0.5, '#64748b');
+      railGrad.addColorStop(1, '#1e293b');
+
+      ctx.fillStyle = railGrad;
+      // Left rail
+      ctx.fillRect(lx - halfW, ly, 4, lh);
+      // Right rail
+      ctx.fillRect(lx + halfW - 4, ly, 4, lh);
+
+      // Rungs every 14px
+      ctx.fillStyle = '#94a3b8';
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 1;
+      for (let ry = ly + 8; ry < ly + lh - 4; ry += 14) {
+        ctx.fillRect(lx - halfW + 3, ry - 2, lw - 6, 4);
+        ctx.strokeRect(lx - halfW + 3, ry - 2, lw - 6, 4);
+      }
+
+      // Base footing plates
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(lx - halfW - 2, ly + lh - 3, 6, 4);
+      ctx.fillRect(lx + halfW - 4, ly + lh - 3, 6, 4);
+
+      // Interaction Prompt for Local Player
+      if (localPlayer && localPlayer.state !== 'DEAD' && !localPlayer.hasEscaped) {
+        const distToBase = Math.hypot(localPlayer.x - lx, localPlayer.y - (ly + lh));
+        const distToLadderX = Math.abs(localPlayer.x - lx);
+        const inClimbY = localPlayer.y >= ly - 10 && localPlayer.y <= ly + lh + 10;
+
+        if (distToBase < 55 && !localPlayer.carryingLadderId) {
+          const pulse = 0.7 + Math.sin(time * 6) * 0.3;
+          ctx.fillStyle = `rgba(253, 224, 71, ${pulse})`;
+          ctx.font = 'bold 10px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('[E] PICK UP LADDER', lx, ly - 14);
+
+          if (distToLadderX < 35 && inClimbY) {
+            ctx.fillStyle = '#38bdf8';
+            ctx.fillText('[W / ▲] CLIMB LADDER', lx, ly - 26);
+          }
+        }
       }
 
       ctx.restore();
@@ -1177,6 +1232,60 @@ export class GameRenderer {
       ctx.moveTo(-4, -4); ctx.lineTo(-8, 0);
       ctx.moveTo(4, -4); ctx.lineTo(8, 0);
       ctx.stroke();
+
+    } else if (p.state === 'CLIMBING_LADDER') {
+      // Vertical ladder climbing animation
+      const climbCycle = Math.sin(Date.now() * 0.016);
+      ctx.fillStyle = clothColor;
+      ctx.fillRect(-6, -24, 12, 14);
+
+      ctx.fillStyle = skinTone;
+      ctx.beginPath();
+      ctx.arc(0, -30, 6.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Arms alternating on ladder rungs
+      ctx.strokeStyle = skinTone;
+      ctx.lineWidth = 3.5;
+      ctx.beginPath();
+      ctx.moveTo(-4, -20);
+      ctx.lineTo(-9, -26 - climbCycle * 6);
+      ctx.lineTo(-7, -34 - climbCycle * 6);
+      ctx.moveTo(4, -20);
+      ctx.lineTo(9, -20 + climbCycle * 6);
+      ctx.lineTo(7, -14 + climbCycle * 6);
+      ctx.stroke();
+
+      // Legs alternating on ladder rungs
+      ctx.strokeStyle = '#1e293b';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(-3, -10);
+      ctx.lineTo(-7, -4 + climbCycle * 6);
+      ctx.lineTo(-7, 2 + climbCycle * 6);
+      ctx.moveTo(3, -10);
+      ctx.lineTo(7, -4 - climbCycle * 6);
+      ctx.lineTo(7, 2 - climbCycle * 6);
+      ctx.stroke();
+    }
+
+    // Carried physical ladder strapped to player's back
+    if (p.carryingLadderId) {
+      ctx.save();
+      ctx.fillStyle = '#64748b';
+      ctx.fillRect(-14 * dir, -38, 4, 46);
+      ctx.fillRect(-6 * dir, -38, 4, 46);
+      ctx.fillStyle = '#94a3b8';
+      for (let ry = -34; ry < 6; ry += 8) {
+        ctx.fillRect(-14 * dir, ry, 12, 2);
+      }
+      ctx.strokeStyle = '#78350f';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-6 * dir, -26);
+      ctx.lineTo(6 * dir, -14);
+      ctx.stroke();
+      ctx.restore();
     }
 
     ctx.restore();
@@ -1230,28 +1339,29 @@ export class GameRenderer {
   }
 
   private drawDeadHuman(ctx: CanvasRenderingContext2D, p: Player): void {
-    // Irregular blood puddle on floor
+    const py = p.y;
+    // Irregular blood puddle on floor/ledge
     ctx.fillStyle = 'rgba(127, 29, 29, 0.85)';
     ctx.beginPath();
-    ctx.ellipse(p.x, FLOOR_Y - 2, 24, 7, 0, 0, Math.PI * 2);
+    ctx.ellipse(p.x, py - 2, 24, 7, 0, 0, Math.PI * 2);
     ctx.fill();
 
     // Sprawled corpse flat on the concrete
     ctx.fillStyle = p.color;
-    ctx.fillRect(p.x - 12, FLOOR_Y - 6, 20, 6); // Torso
+    ctx.fillRect(p.x - 12, py - 6, 20, 6); // Torso
 
     ctx.fillStyle = '#1e293b';
-    ctx.fillRect(p.x - 24, FLOOR_Y - 5, 12, 4); // Legs
+    ctx.fillRect(p.x - 24, py - 5, 12, 4); // Legs
 
     ctx.fillStyle = '#b27b4c';
     ctx.beginPath();
-    ctx.arc(p.x + 12, FLOOR_Y - 5, 5, 0, Math.PI * 2); // Head
+    ctx.arc(p.x + 12, py - 5, 5, 0, Math.PI * 2); // Head
     ctx.fill();
 
     ctx.fillStyle = '#ef4444';
     ctx.font = 'bold 10px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(`💀 ${p.name}`, p.x, FLOOR_Y + 14);
+    ctx.fillText(`💀 ${p.name}`, p.x, py + 14);
   }
 
   private drawProjectiles(ctx: CanvasRenderingContext2D, projectiles: Projectile[]): void {

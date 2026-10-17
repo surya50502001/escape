@@ -206,7 +206,7 @@ describe('The Pit - Complete Multiplayer Audit & Unit Tests', () => {
       victim.y = 300;
       victim.state = 'CLIMBING_V_PIPE';
 
-      thrower.x = 800;
+      thrower.x = V_PIPE_X - 100;
       thrower.y = FLOOR_Y;
       thrower.state = 'ON_FLOOR';
       engine.state.rope.state = 'HELD';
@@ -224,6 +224,8 @@ describe('The Pit - Complete Multiplayer Audit & Unit Tests', () => {
       // Simulate contact
       engine.state.rope.x = victim.x - 5;
       engine.state.rope.y = victim.y;
+      engine.state.rope.vx = 0;
+      engine.state.rope.vy = 0;
       engine.update();
 
       assert.equal(engine.state.rope.state, 'ATTACHED');
@@ -293,6 +295,8 @@ describe('The Pit - Complete Multiplayer Audit & Unit Tests', () => {
       // Rope reaches victim
       engine.state.rope.x = victim.x - 5;
       engine.state.rope.y = victim.y - 15;
+      engine.state.rope.vx = 0;
+      engine.state.rope.vy = 0;
       engine.update();
 
       assert.equal(engine.state.rope.state, 'ATTACHED');
@@ -539,68 +543,31 @@ describe('The Pit - Complete Multiplayer Audit & Unit Tests', () => {
   // 8. ENVIRONMENTAL HAZARDS & OBSTACLES
   // ========================================================
   describe('Environmental Hazards & Obstacles', () => {
-    it('should land falling player on catwalk platform and drop player when walking off edge', () => {
+    it('should land falling player on maze platform and drop player when walking off edge', () => {
       const player = engine.addHumanPlayer('p_catwalk', 'Catwalker')!;
-      const catwalk = engine.state.obstacles.find(o => o.type === 'PLATFORM')!;
 
-      // Position player falling above catwalk
-      player.x = catwalk.x + 30;
-      player.y = catwalk.y - 40;
+      // Position player falling above dormitory ledge platform (DORM_LEDGE_Y = 360)
+      player.x = 800;
+      player.y = 300;
       player.vy = 200;
       player.state = 'FALLING';
 
       // Simulate physics ticks until landing
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < 15; i++) {
         engine.update();
         if (player.state === 'ON_FLOOR') break;
       }
 
-      assert.equal(player.state, 'ON_FLOOR', 'Player must land on elevated catwalk');
-      assert.equal(player.y, catwalk.y, 'Player Y must align with catwalk surface');
+      assert.equal(player.state, 'ON_FLOOR', 'Player must land on elevated platform');
+      assert.equal(player.y, 360, 'Player Y must align with platform surface');
       assert.equal(player.isGrounded, true);
 
-      // Walk off right edge of catwalk
-      player.x = catwalk.x + catwalk.width + 25;
+      // Walk off right edge of dorm ledge (DORM_RIGHT_X = 1100)
+      player.x = 1150;
       engine.update();
 
-      assert.equal(player.state, 'FALLING', 'Walking off catwalk edge must trigger falling');
+      assert.equal(player.state, 'FALLING', 'Walking off platform edge must trigger falling');
       assert.equal(player.isGrounded, false);
-    });
-
-    it('should inflict spike damage and knock upward when player steps into spiked floor', () => {
-      const player = engine.addHumanPlayer('p_spiked', 'SpikeVictim')!;
-      const spikes = engine.state.obstacles.find(o => o.type === 'SPIKES')!;
-
-      player.x = spikes.x + 20;
-      player.y = FLOOR_Y;
-      player.state = 'ON_FLOOR';
-      const initialHealth = player.health;
-
-      engine.update();
-
-      assert.ok(player.health < initialHealth, 'Spikes must inflict damage');
-      assert.ok(player.vy < 0, 'Spikes must launch player upward');
-      assert.equal(player.state, 'FALLING');
-    });
-
-    it('should cycle steam vent and damage/launch player upward when ACTIVE', () => {
-      const player = engine.addHumanPlayer('p_steamed', 'SteamVictim')!;
-      const vent = engine.state.obstacles.find(o => o.type === 'STEAM_VENT')!;
-
-      // Force vent into ACTIVE state
-      vent.state = 'ACTIVE';
-      vent.timer = 2.5;
-
-      player.x = vent.x + vent.width / 2;
-      player.y = FLOOR_Y;
-      player.state = 'ON_FLOOR';
-      const initialHealth = player.health;
-
-      engine.update();
-
-      assert.ok(player.health < initialHealth, 'Active steam vent must deal damage');
-      assert.ok(player.vy < 0, 'Active steam vent must blast player upward');
-      assert.equal(player.state, 'FALLING');
     });
 
     it('should oscillate moving security barrier and block horizontal movement', () => {
@@ -915,4 +882,155 @@ describe('The Pit - Complete Multiplayer Audit & Unit Tests', () => {
       assert.equal(victim.climbGrabbingId, null, 'Grabbed victim must not be able to grab others');
     });
   });
+
+  // ========================================================
+  // 10. PHYSICAL LADDER SYSTEM
+  // ========================================================
+  describe('Physical Ladder System', () => {
+    it('should pick up nearby ladder with E key', () => {
+      const p = engine.addHumanPlayer('p_ladder_user', 'Climber')!;
+      const ladder = engine.state.ladders[0]; // ladder_maint at x=160, y=FLOOR_Y - 90
+      p.x = ladder.x;
+      p.y = FLOOR_Y;
+      p.state = 'ON_FLOOR';
+
+      const input = createDefaultInput();
+      input.interact = true;
+      engine.handleInput(p.id, input);
+
+      assert.equal(ladder.state, 'CARRIED');
+      assert.equal(ladder.carriedByPlayerId, p.id);
+      assert.equal(p.carryingLadderId, ladder.id);
+    });
+
+    it('should reject pickup if player is too far from ladder', () => {
+      const p = engine.addHumanPlayer('p_far_user', 'FarClimber')!;
+      const ladder = engine.state.ladders[0];
+      p.x = ladder.x + 300;
+      p.y = FLOOR_Y;
+      p.state = 'ON_FLOOR';
+
+      const input = createDefaultInput();
+      input.interact = true;
+      engine.handleInput(p.id, input);
+
+      assert.equal(ladder.state, 'PLACED');
+      assert.equal(p.carryingLadderId, null);
+    });
+
+    it('should carry ladder with player position updates', () => {
+      const p = engine.addHumanPlayer('p_carrier', 'Carrier')!;
+      const ladder = engine.state.ladders[0];
+      p.x = ladder.x;
+      p.y = FLOOR_Y;
+
+      engine.tryPickupLadder(p);
+      assert.equal(p.carryingLadderId, ladder.id);
+
+      // Move player
+      p.x = 900;
+      p.y = FLOOR_Y;
+      engine.update();
+
+      assert.equal(ladder.x, 900);
+      assert.equal(ladder.y, FLOOR_Y - ladder.height);
+    });
+
+    it('should drop ladder on E key and validate placement', () => {
+      const p = engine.addHumanPlayer('p_dropper', 'Dropper')!;
+      const ladder = engine.state.ladders[0];
+      p.x = ladder.x;
+      p.y = FLOOR_Y;
+
+      engine.tryPickupLadder(p);
+      assert.equal(ladder.state, 'CARRIED');
+
+      // Walk to new position and drop with E
+      p.x = 750;
+      p.y = FLOOR_Y;
+      const dropInput = createDefaultInput();
+      dropInput.interact = true;
+      engine.handleInput(p.id, dropInput);
+
+      assert.equal(ladder.state, 'PLACED');
+      assert.equal(ladder.carriedByPlayerId, null);
+      assert.equal(p.carryingLadderId, null);
+      assert.equal(ladder.x, 750);
+      assert.equal(ladder.isPlaced, true, 'Placement near floor must be valid');
+    });
+
+    it('should allow climbing a validly placed ladder with UP key', () => {
+      const p = engine.addHumanPlayer('p_climber', 'Climber')!;
+      const ladder = engine.state.ladders[0];
+      ladder.x = 500;
+      ladder.y = FLOOR_Y - ladder.height;
+      ladder.state = 'PLACED';
+      ladder.isPlaced = true;
+
+      p.x = 500;
+      p.y = FLOOR_Y;
+      p.state = 'ON_FLOOR';
+
+      const upInput = createDefaultInput();
+      upInput.up = true;
+      engine.handleInput(p.id, upInput);
+
+      assert.equal(p.state, 'CLIMBING_LADDER');
+      assert.equal(p.x, ladder.x);
+
+      // Climbing up decreases Y
+      engine.handleInput(p.id, upInput);
+      assert.ok(p.vy < 0, 'Climbing ladder should move player upward');
+    });
+
+    it('should dismount ladder into falling when pressing left or right', () => {
+      const p = engine.addHumanPlayer('p_dismount', 'Dismounter')!;
+      const ladder = engine.state.ladders[0];
+      ladder.x = 500;
+      ladder.y = FLOOR_Y - ladder.height;
+      ladder.state = 'PLACED';
+      ladder.isPlaced = true;
+
+      p.x = 500;
+      p.y = FLOOR_Y - 40;
+      p.state = 'CLIMBING_LADDER';
+
+      const leftInput = createDefaultInput();
+      leftInput.left = true;
+      engine.handleInput(p.id, leftInput);
+
+      assert.equal(p.state, 'FALLING');
+      assert.ok(p.vx < 0);
+    });
+
+    it('should drop carried ladder when player dies', () => {
+      const p = engine.addHumanPlayer('p_dying', 'Victim')!;
+      const ladder = engine.state.ladders[0];
+      p.x = ladder.x;
+      p.y = FLOOR_Y;
+
+      engine.tryPickupLadder(p);
+      assert.equal(ladder.state, 'CARRIED');
+
+      engine.damagePlayer(p, 100);
+      assert.equal(p.state, 'DEAD');
+      assert.equal(p.carryingLadderId, null);
+      assert.equal(ladder.state, 'PLACED');
+    });
+
+    it('should drop carried ladder when player disconnects', () => {
+      const p = engine.addHumanPlayer('p_disconnect', 'Quitter')!;
+      const ladder = engine.state.ladders[0];
+      p.x = ladder.x;
+      p.y = FLOOR_Y;
+
+      engine.tryPickupLadder(p);
+      assert.equal(ladder.state, 'CARRIED');
+
+      engine.removePlayer(p.id);
+      assert.equal(ladder.state, 'PLACED');
+      assert.equal(ladder.carriedByPlayerId, null);
+    });
+  });
 });
+

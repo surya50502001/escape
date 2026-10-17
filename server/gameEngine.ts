@@ -1,58 +1,45 @@
 import { 
   GameState, GamePhase, Player, Projectile, SniperShot, SoundEvent, ClientInput, Rope, HatchZone,
-  Obstacle, FallingRock,
-  MAX_PLAYERS, CHAMBER_WIDTH, CHAMBER_HEIGHT, FLOOR_Y, V_PIPE_X, V_PIPE_TOP_Y, H_PIPE_Y, H_PIPE_EXIT_X 
+  Obstacle, FallingRock, Ladder, WallRect, MAZE_WALLS,
+  MAX_PLAYERS, WORLD_WIDTH, WORLD_HEIGHT, FLOOR_Y, LOWER_FLOOR_Y,
+  V_PIPE_X, V_PIPE_TOP_Y, H_PIPE_Y, H_PIPE_EXIT_X,
+  DORM_LEDGE_Y, DORM_LEFT_X, DORM_RIGHT_X,
+  MAINT_ROOM_LEFT_X, SPAWN_LEFT_X, SPAWN_RIGHT_X
 } from './types.js';
+
+export type { WallRect };
+export { MAZE_WALLS };
 
 export const HATCH_ZONE: HatchZone = { x: 40, y: 40, width: 90, height: 90 };
 
+
+/**
+ * Ladder spawn positions — initial world positions for the two ladders.
+ * One is in the maintenance room, one is in storage area right of main floor.
+ */
+export const INITIAL_LADDER_POSITIONS: Array<{ id: string; x: number; y: number; height: number }> = [
+  { id: 'ladder_maint',   x: 160,  y: FLOOR_Y - 90, height: 90 },  // Maintenance room
+  { id: 'ladder_storage', x: 1350, y: FLOOR_Y - 90, height: 90 },  // Storage area right of main floor
+];
+
+/**
+ * Platform-type obstacles that still appear in the world.
+ * (SPIKES and STEAM_VENT removed — not exploration-meaningful)
+ */
 export const INITIAL_OBSTACLES: Obstacle[] = [
-  // 1. Spiked Floor Section
-  {
-    id: 'spikes_floor',
-    type: 'SPIKES',
-    x: 520,
-    y: FLOOR_Y - 14,
-    width: 100,
-    height: 14,
-    state: 'ACTIVE',
-    timer: 0
-  },
-  // 2. Rusted Elevated Catwalk Platform
-  {
-    id: 'catwalk_platform',
-    type: 'PLATFORM',
-    x: 380,
-    y: 440,
-    width: 160,
-    height: 14,
-    state: 'ACTIVE',
-    timer: 0
-  },
-  // 3. High-Pressure Steam Pipe Vent
-  {
-    id: 'steam_vent',
-    type: 'STEAM_VENT',
-    x: 260,
-    y: FLOOR_Y - 16,
-    width: 36,
-    height: 120,
-    state: 'IDLE',
-    timer: 4.0
-  },
-  // 4. Moving Industrial Security Barrier Grate
+  // Moving security gate in service corridor
   {
     id: 'moving_barrier',
     type: 'MOVING_BARRIER',
-    x: 720,
-    y: 490,
-    width: 18,
-    height: 125,
+    x: 1490,
+    y: 516,
+    width: 16,
+    height: 80,
     state: 'ACTIVE',
     timer: 0,
-    minY: 480,
-    maxY: 590,
-    vy: 45
+    minY: 516,
+    maxY: 600,
+    vy: 38
   }
 ];
 
@@ -107,6 +94,101 @@ const HUMAN_COLORS = [
   '#ec4899', '#3b82f6', '#14b8a6', '#f43f5e', '#84cc16'
 ];
 
+/** Maximum Y a player can stand at (main floor or platform) without being in the basement */
+function getNearestFloorY(px: number, _py: number): number {
+  // Check if player is in the shaft gap between 2200-2400
+  if (px >= 2200 && px <= 2400) {
+    return LOWER_FLOOR_Y; // Falls through to basement
+  }
+  return FLOOR_Y;
+}
+
+/** Check if player is standing on any maze platform surface */
+function getPlayerLandingY(
+  px: number, py: number, vy: number,
+  walls: WallRect[], obstacles: Obstacle[], ladders: Ladder[]
+): number | null {
+  if (vy <= 0) return null; // Only land when falling down
+
+  const playerRadius = 12;
+  let bestY: number | null = null;
+
+  // Check maze walls (platforms and solid tops)
+  for (const w of walls) {
+    if (w.x > 0 && w.y === 0 && w.width === WORLD_WIDTH) continue; // Skip ceiling for landing
+    const surfaceY = w.y;
+    // Player center is 15px above feet, check if px is over platform
+    if (px >= w.x - playerRadius && px <= w.x + w.width + playerRadius) {
+      if (py <= surfaceY + 12 && py >= surfaceY - 60) {
+        if (bestY === null || surfaceY < bestY) {
+          bestY = surfaceY;
+        }
+      }
+    }
+  }
+
+  // Check obstacles (PLATFORM type)
+  for (const obs of obstacles) {
+    if (obs.type === 'PLATFORM') {
+      if (px >= obs.x - playerRadius && px <= obs.x + obs.width + playerRadius) {
+        if (py <= obs.y + 12 && py >= obs.y - 60) {
+          if (bestY === null || obs.y < bestY) {
+            bestY = obs.y;
+          }
+        }
+      }
+    }
+  }
+
+  // Check placed ladders (can stand on top)
+  for (const ladder of ladders) {
+    if (ladder.state !== 'PLACED' || !ladder.isPlaced) continue;
+    const lTop = ladder.y;
+    if (px >= ladder.x - 16 && px <= ladder.x + ladder.width + 16) {
+      if (py <= lTop + 12 && py >= lTop - 40) {
+        if (bestY === null || lTop < bestY) {
+          bestY = lTop;
+        }
+      }
+    }
+  }
+
+  return bestY;
+}
+
+/** Check horizontal wall collision */
+function resolveHorizontalWallCollision(
+  px: number, py: number, playerHalfW: number,
+  walls: WallRect[]
+): number {
+  let rx = px;
+  for (const w of walls) {
+    if (!w.solid && !w.isPlatform) continue;
+    if (w.solid === false && w.isPlatform !== true) continue;
+    // Only solid walls block horizontally
+    if (!w.solid) continue;
+    // If player's feet are at or above the top surface (+6px tolerance for standing on it),
+    // they are walking on top of it, not colliding with its vertical side.
+    if (py <= w.y + 6) continue;
+    if (py - 45 > w.y + w.height) continue;
+    // Check overlap
+    const pLeft = rx - playerHalfW;
+    const pRight = rx + playerHalfW;
+    const wLeft = w.x;
+    const wRight = w.x + w.width;
+    if (pRight > wLeft && pLeft < wRight) {
+      const overlapL = pRight - wLeft;
+      const overlapR = wRight - pLeft;
+      if (overlapL < overlapR) {
+        rx = wLeft - playerHalfW;
+      } else {
+        rx = wRight + playerHalfW;
+      }
+    }
+  }
+  return rx;
+}
+
 export class GameEngine {
   public state: GameState;
   private pendingSoundEvents: SoundEvent[] = [];
@@ -148,8 +230,23 @@ export class GameEngine {
       fallingRocks: [],
       projectiles: [],
       recentShots: [],
-      soundEvents: []
+      soundEvents: [],
+      ladders: this.createInitialLadders()
     };
+  }
+
+  private createInitialLadders(): Ladder[] {
+    return INITIAL_LADDER_POSITIONS.map(pos => ({
+      id: pos.id,
+      x: pos.x,
+      y: pos.y,
+      width: 20,
+      height: pos.height,
+      state: 'PLACED' as const,
+      carriedByPlayerId: null,
+      isPlaced: true,
+      leanAngle: 0
+    }));
   }
 
   public emitSound(event: SoundEvent): void {
@@ -167,21 +264,24 @@ export class GameEngine {
     this.state.recentShots = [];
     this.pendingSoundEvents = [];
 
-    // Reset rope onto concrete floor
-    this.dropRope(450, FLOOR_Y);
+    // Reset rope onto main floor
+    this.dropRope(700, FLOOR_Y);
 
     // Reset obstacles & hazards
     this.state.obstacles = INITIAL_OBSTACLES.map(o => ({ ...o }));
     this.state.fallingRocks = [];
     this.ceilingRockTimer = 10 + Math.random() * 6;
 
+    // Reset ladders to initial positions
+    this.state.ladders = this.createInitialLadders();
+
     this.nextSignalTimer = 14 + Math.random() * 8;
-    this.state.announcementText = 'ANONYMOUS GUARDS THE UPPER HATCH. SURVIVE 10 MINUTES IN THE CELL.';
+    this.state.announcementText = 'ANONYMOUS GUARDS THE UPPER HATCH. SURVIVE 10 MINUTES OR ESCAPE THE PIT.';
     this.emitSound({ type: 'CLANG' });
 
-    // Spawn connected human players along the floor
+    // Spawn connected human players along the main floor
     this.state.players.forEach((p, idx) => {
-      p.x = 180 + idx * 65;
+      p.x = SPAWN_LEFT_X + idx * 65;
       p.y = FLOOR_Y;
       p.vx = 0;
       p.vy = 0;
@@ -202,6 +302,7 @@ export class GameEngine {
       p.grabbedByPlayerId = null;
       p.struggleMeter = 0;
       p.hazardCooldown = 0;
+      p.carryingLadderId = null;
     });
   }
 
@@ -226,7 +327,7 @@ export class GameEngine {
       id,
       name: name || `Prisoner ${this.state.players.length + 1}`,
       isBot: false,
-      x: 180 + (this.state.players.length * 65) % 650,
+      x: SPAWN_LEFT_X + (this.state.players.length * 65) % 800,
       y: FLOOR_Y,
       vx: 0,
       vy: 0,
@@ -248,12 +349,11 @@ export class GameEngine {
       climbGrabbingId: null,
       grabbedByPlayerId: null,
       struggleMeter: 0,
-      hazardCooldown: 0
+      hazardCooldown: 0,
+      carryingLadderId: null
     };
 
     this.state.players.push(p);
-
-    // If joining during an active match or lobby, they enter safely without corrupting match state
     return p;
   }
 
@@ -283,7 +383,7 @@ export class GameEngine {
   }
 
   public handleClimbingCombat(p: Player, input: ClientInput): boolean {
-    if (p.state !== 'CLIMBING_V_PIPE' && p.state !== 'HANGING_H_PIPE') {
+    if (p.state !== 'CLIMBING_V_PIPE' && p.state !== 'HANGING_H_PIPE' && p.state !== 'CLIMBING_LADDER') {
       if (p.climbGrabbingId) this.releaseClimbGrab(p, true);
       if (p.grabbedByPlayerId) this.breakGrabOnVictim(p);
       return false;
@@ -295,12 +395,10 @@ export class GameEngine {
       if (strugglePressed) {
         const staminaCost = 10;
         p.stamina = Math.max(0, p.stamina - staminaCost);
-        // Gain struggle escape progress (full speed if has stamina, half if exhausted)
         p.struggleMeter = Math.min(100, p.struggleMeter + (p.stamina > 0 ? 30 : 16));
         this.emitSound({ type: 'CLIMB_STRUGGLE', x: p.x, y: p.y });
 
         if (p.struggleMeter >= 100) {
-          // Break free! Stunning the attacker briefly
           const grabber = this.state.players.find(x => x.id === p.grabbedByPlayerId);
           if (grabber) {
             grabber.climbGrabbingId = null;
@@ -317,27 +415,22 @@ export class GameEngine {
       }
       p.vx = 0;
       p.vy = 0;
-      return true; // Grabbed victim cannot climb or traverse while held
+      return true;
     }
 
     // 2. ATTACKER HOLDING & DRAGGING VICTIM
     if (p.climbGrabbingId) {
       const isHolding = Boolean(input.climbGrab);
       if (!isHolding) {
-        // Grab released by attacker
         this.releaseClimbGrab(p, true);
         return false;
       }
-
-      // Drag downward
       if (input.down) {
         p.vy = p.state === 'CLIMBING_V_PIPE' ? 75 : 40;
       } else {
         p.vy = 0;
       }
       p.vx = 0;
-
-      // Check if dragged to floor
       if (p.y >= FLOOR_Y) {
         this.releaseClimbGrab(p, false);
         p.y = FLOOR_Y;
@@ -354,14 +447,12 @@ export class GameEngine {
         p.climbAttackCooldown = 0.75;
         this.emitSound({ type: 'CLIMB_KICK', x: p.x, y: p.y });
 
-        // Directional hit-scan: strictly beneath/forward from attacking player
         let hitTarget: Player | undefined;
         if (p.state === 'CLIMBING_V_PIPE') {
           hitTarget = this.state.players.find(target => {
             if (target.id === p.id || target.state === 'DEAD' || target.hasEscaped) return false;
             const dy = target.y - p.y;
             const dx = Math.abs(target.x - p.x);
-            // Target must be strictly beneath attacker (dy > 10) and within 65px
             return dy > 10 && dy <= 65 && dx <= 30;
           });
         } else if (p.state === 'HANGING_H_PIPE') {
@@ -371,29 +462,28 @@ export class GameEngine {
             const fwdX = p.facing === 'LEFT' ? (p.x - target.x) : (target.x - p.x);
             return dy >= -10 && dy <= 65 && fwdX >= 0 && fwdX <= 55;
           });
+        } else if (p.state === 'CLIMBING_LADDER') {
+          hitTarget = this.state.players.find(target => {
+            if (target.id === p.id || target.state === 'DEAD' || target.hasEscaped) return false;
+            const dy = target.y - p.y;
+            const dx = Math.abs(target.x - p.x);
+            return dy > 10 && dy <= 65 && dx <= 35;
+          });
         }
 
         if (hitTarget) {
-          // Kick connects! Detach target from pipe with knockback impulse & stun
           hitTarget.state = 'FALLING';
           hitTarget.isGrounded = false;
           hitTarget.stunnedTimer = 0.8;
-          if (p.state === 'CLIMBING_V_PIPE') {
-            hitTarget.vx = -160;
-            hitTarget.vy = 220;
-          } else {
-            hitTarget.vx = (p.facing === 'LEFT' ? -180 : 180);
-            hitTarget.vy = 200;
-          }
+          hitTarget.vx = p.state === 'CLIMBING_V_PIPE' ? -160 : (p.facing === 'LEFT' ? -160 : 160);
+          hitTarget.vy = 220;
           this.damagePlayer(hitTarget, 18, p);
           this.emitSound({ type: 'TACKLE', x: hitTarget.x, y: hitTarget.y });
           this.emitSound({ type: 'FALL_IMPACT', x: hitTarget.x, y: hitTarget.y });
         } else if (input.climbGrab) {
-          // Kick missed: check if grab input is held
           this.attemptClimbGrab(p);
         }
       } else if (input.climbGrab) {
-        // Grab held directly
         this.attemptClimbGrab(p);
       }
     }
@@ -404,7 +494,7 @@ export class GameEngine {
   public attemptClimbGrab(p: Player): boolean {
     if (p.climbGrabbingId || p.grabbedByPlayerId) return false;
     let grabTarget: Player | undefined;
-    if (p.state === 'CLIMBING_V_PIPE') {
+    if (p.state === 'CLIMBING_V_PIPE' || p.state === 'CLIMBING_LADDER') {
       grabTarget = this.state.players.find(target => {
         if (target.id === p.id || target.state === 'DEAD' || target.hasEscaped) return false;
         if (target.grabbedByPlayerId || target.climbGrabbingId) return false;
@@ -438,7 +528,12 @@ export class GameEngine {
     const player = this.state.players.find(p => p.id === id);
     if (!player) return;
 
-    // Immediately clear rope and climbing combat interactions so other players aren't stuck
+    // Drop any carried ladder
+    if (player.carryingLadderId) {
+      this.dropLadder(player);
+    }
+
+    // Clean up rope interactions
     if (this.state.rope.heldByPlayerId === id || this.state.rope.attachedPlayerId === id) {
       this.dropRope();
     }
@@ -458,7 +553,6 @@ export class GameEngine {
         this.state.announcementText = 'WAITING FOR PRISONERS TO JOIN VIA LINK...';
       }
     } else {
-      // Temporary disconnect during active match: halt physics velocity but retain slot for reconnect
       player.vx = 0;
       player.vy = 0;
     }
@@ -468,6 +562,119 @@ export class GameEngine {
     // Pure human multiplayer: No NPCs or bots
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // LADDER MECHANICS
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Attempt to pick up a nearby placed ladder.
+   * Only one ladder can be carried at a time.
+   * Server-authoritative: first player to interact wins.
+   */
+  public tryPickupLadder(p: Player): boolean {
+    if (p.carryingLadderId) return false; // Already carrying one
+    if (p.state === 'DEAD' || p.hasEscaped) return false;
+
+    const PICKUP_RANGE = 55;
+    for (const ladder of this.state.ladders) {
+      if (ladder.state === 'CARRIED') continue; // Already carried
+      const dist = Math.hypot(p.x - ladder.x, p.y - (ladder.y + ladder.height));
+      if (dist < PICKUP_RANGE) {
+        ladder.state = 'CARRIED';
+        ladder.carriedByPlayerId = p.id;
+        ladder.isPlaced = false;
+        p.carryingLadderId = ladder.id;
+        this.emitSound({ type: 'PICKUP', x: ladder.x, y: ladder.y });
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Drop the carried ladder at the player's current position.
+   * Validates placement and sets isPlaced accordingly.
+   */
+  public dropLadder(p: Player): void {
+    if (!p.carryingLadderId) return;
+    const ladder = this.state.ladders.find(l => l.id === p.carryingLadderId);
+    if (!ladder) {
+      p.carryingLadderId = null;
+      return;
+    }
+
+    // Place ladder at player position
+    ladder.x = p.x;
+    ladder.y = p.y - ladder.height; // Top of ladder at shoulder height
+    ladder.state = 'PLACED';
+    ladder.carriedByPlayerId = null;
+    ladder.isPlaced = this.validateLadderPlacement(ladder);
+    ladder.leanAngle = 0;
+
+    p.carryingLadderId = null;
+    this.emitSound({ type: 'DROP', x: ladder.x, y: ladder.y });
+  }
+
+  /**
+   * Validate that a ladder is placed against a valid surface.
+   * A ladder is valid if its base is on/near a floor or platform,
+   * and its top can reach a climbable ledge.
+   */
+  public validateLadderPlacement(ladder: Ladder): boolean {
+    const baseY = ladder.y + ladder.height;
+    const topY = ladder.y;
+
+    // Base must be near a floor surface (within 30px)
+    const isOnMainFloor = baseY >= FLOOR_Y - 10 && baseY <= FLOOR_Y + 30;
+    let isOnPlatform = false;
+    for (const wall of MAZE_WALLS) {
+      if (!wall.isPlatform && !wall.solid) continue;
+      const wallBaseY = wall.y;
+      if (Math.abs(baseY - wallBaseY) < 25 && 
+          ladder.x >= wall.x - 30 && 
+          ladder.x <= wall.x + wall.width + 30) {
+        isOnPlatform = true;
+        break;
+      }
+    }
+
+    const baseValid = isOnMainFloor || isOnPlatform;
+    if (!baseValid) return false;
+
+    // Ladder must not clip through solid walls horizontally
+    for (const wall of MAZE_WALLS) {
+      if (!wall.solid) continue;
+      if (ladder.x + 10 > wall.x && ladder.x - 10 < wall.x + wall.width) {
+        if (topY < wall.y + wall.height && baseY > wall.y) {
+          return false; // Clips through solid wall
+        }
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Check if a player can start climbing a nearby placed ladder.
+   */
+  public tryClimbLadder(p: Player): string | null {
+    if (p.state === 'DEAD' || p.hasEscaped || p.carryingLadderId) return null;
+    const CLIMB_RANGE = 40;
+    for (const ladder of this.state.ladders) {
+      if (!ladder.isPlaced || ladder.state !== 'PLACED') continue;
+      const dist = Math.abs(p.x - ladder.x);
+      const inYRange = p.y >= ladder.y - 10 && p.y <= ladder.y + ladder.height + 10;
+      if (dist < CLIMB_RANGE && inYRange) {
+        return ladder.id;
+      }
+    }
+    return null;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // INPUT HANDLING
+  // ─────────────────────────────────────────────────────────────────────────
+
   public handleInput(playerId: string, input: ClientInput): void {
     const p = this.state.players.find(x => x.id === playerId);
     if (!p || p.state === 'DEAD' || p.hasEscaped) return;
@@ -475,10 +682,8 @@ export class GameEngine {
     p.angle = input.aimAngle;
     if (p.stunnedTimer > 0) return;
 
-    // Track whether player was ALREADY holding rope prior to any pickup in this tick
     const alreadyHoldingRope = this.state.rope.heldByPlayerId === p.id;
 
-    // Movement logic depending on current physical state
     if (p.state === 'ON_FLOOR') {
       const runSpeed = 190;
       if (input.left) {
@@ -498,13 +703,39 @@ export class GameEngine {
         p.state = 'FALLING';
       }
 
-      // Grab Vertical Wall Pipe on right
+      // Grab main vertical pipe (now at V_PIPE_X = 1480)
       if (Math.abs(p.x - V_PIPE_X) < 35 && (input.up || input.right)) {
         p.state = 'CLIMBING_V_PIPE';
         p.x = V_PIPE_X;
         p.vx = 0;
         p.vy = 0;
         p.isGrounded = false;
+      }
+
+      // Try climbing a ladder (W/Up near a placed ladder)
+      if (input.up && !p.isGrounded === false) {
+        const ladderId = this.tryClimbLadder(p);
+        if (ladderId) {
+          const ladder = this.state.ladders.find(l => l.id === ladderId)!;
+          p.state = 'CLIMBING_LADDER';
+          p.x = ladder.x; // Snap to ladder x
+          p.vx = 0;
+          p.vy = 0;
+          p.isGrounded = false;
+        }
+      }
+
+      // E: Interact — drop carried ladder, or pick up rope, or pick up ladder
+      if (input.interact) {
+        if (p.carryingLadderId) {
+          this.dropLadder(p);
+        } else if (this.state.rope.state === 'ON_FLOOR' && Math.hypot(p.x - this.state.rope.x, p.y - this.state.rope.y) < 50) {
+          this.state.rope.state = 'HELD';
+          this.state.rope.heldByPlayerId = p.id;
+          this.state.rope.attachedPlayerId = null;
+        } else {
+          this.tryPickupLadder(p);
+        }
       }
 
       // Tackle lunge on floor
@@ -517,26 +748,14 @@ export class GameEngine {
         this.emitSound({ type: 'TACKLE', x: p.x, y: p.y });
       }
 
-      // Pick up rope from floor
-      if (input.interact && this.state.rope.state === 'ON_FLOOR') {
-        const distToRope = Math.hypot(p.x - this.state.rope.x, p.y - this.state.rope.y);
-        if (distToRope < 50) {
-          this.state.rope.state = 'HELD';
-          this.state.rope.heldByPlayerId = p.id;
-          this.state.rope.attachedPlayerId = null;
-        }
-      }
     } else if (p.state === 'CLIMBING_V_PIPE') {
       p.x = V_PIPE_X;
       p.vx = 0;
 
       const combatOverrode = this.handleClimbingCombat(p, input);
-      if (combatOverrode) {
-        return;
-      }
+      if (combatOverrode) return;
 
       const climbSpeed = 115;
-
       if (input.up) {
         p.vy = -climbSpeed;
       } else if (input.down) {
@@ -558,23 +777,21 @@ export class GameEngine {
         p.vy = 0;
       }
 
-      // Touch floor again
+      // Touch floor
       if (p.y >= FLOOR_Y) {
         p.y = FLOOR_Y;
         p.state = 'ON_FLOOR';
         p.isGrounded = true;
       }
+
     } else if (p.state === 'HANGING_H_PIPE') {
       p.y = H_PIPE_Y + 15;
       p.vy = 0;
 
       const combatOverrode = this.handleClimbingCombat(p, input);
-      if (combatOverrode) {
-        return;
-      }
+      if (combatOverrode) return;
 
       const traverseSpeed = 100;
-
       if (input.left) {
         p.vx = -traverseSpeed;
         p.facing = 'LEFT';
@@ -585,16 +802,76 @@ export class GameEngine {
         p.vx = 0;
       }
 
-      // Let go and drop down
       if (input.down) {
         p.state = 'FALLING';
         p.vy = 50;
       }
 
-      // Reached escape opening at upper-left: clamp coordinate
+      // Reached escape opening at upper-left
       if (p.x < 40) {
         p.x = 40;
       }
+
+    } else if (p.state === 'CLIMBING_LADDER') {
+      // Find which ladder we're on
+      const ladder = p.carryingLadderId
+        ? null
+        : this.state.ladders.find(l =>
+            l.state === 'PLACED' && l.isPlaced &&
+            Math.abs(p.x - l.x) < 40 &&
+            p.y >= l.y - 10 && p.y <= l.y + l.height + 10
+          );
+
+      if (!ladder) {
+        // Lost ladder — fall
+        p.state = 'FALLING';
+        return;
+      }
+
+      const combatOverrode = this.handleClimbingCombat(p, input);
+      if (combatOverrode) return;
+
+      const climbSpeed = 100;
+      p.x = ladder.x; // Stay aligned with ladder
+
+      if (input.up) {
+        p.vy = -climbSpeed;
+        p.facing = 'RIGHT';
+      } else if (input.down) {
+        p.vy = climbSpeed;
+      } else {
+        p.vy = 0;
+      }
+
+      // Dismount left or right
+      if (input.left || input.right) {
+        p.facing = input.left ? 'LEFT' : 'RIGHT';
+        p.vx = input.left ? -80 : 80;
+        p.state = 'FALLING';
+        return;
+      }
+
+      // Reached top of ladder while climbing up — step off onto ledge
+      if (p.vy < 0 && p.y <= ladder.y + 5) {
+        p.y = ladder.y;
+        p.vy = 0;
+        p.state = 'ON_FLOOR';
+        p.isGrounded = true;
+      }
+
+      // Reached bottom of ladder while climbing down — step onto floor
+      if (p.vy > 0 && p.y >= ladder.y + ladder.height - 5) {
+        p.y = ladder.y + ladder.height;
+        p.vy = 0;
+        p.state = 'ON_FLOOR';
+        p.isGrounded = true;
+      }
+
+      // E: drop ladder if somehow carrying while climbing (edge case)
+      if (input.interact) {
+        p.state = 'FALLING';
+      }
+
     } else if (p.state === 'FALLING') {
       if (input.left) p.vx = Math.max(-120, p.vx - 10);
       if (input.right) p.vx = Math.min(120, p.vx + 10);
@@ -606,9 +883,26 @@ export class GameEngine {
         p.vx = 0;
         p.vy = 0;
       }
+
+      // Grab a ladder in mid-air (if falling past it)
+      if (input.interact || input.up) {
+        const ladderId = this.tryClimbLadder(p);
+        if (ladderId) {
+          const ladder = this.state.ladders.find(l => l.id === ladderId)!;
+          p.state = 'CLIMBING_LADDER';
+          p.x = ladder.x;
+          p.vx = 0;
+          p.vy = 0;
+        }
+      }
+
+      // Interact: drop ladder while falling
+      if (input.interact && p.carryingLadderId) {
+        this.dropLadder(p);
+      }
     }
 
-    // ROPE ACTIONS: Throw rope, Pull attached rope, or Drop rope
+    // ROPE ACTIONS
     if (alreadyHoldingRope) {
       if (this.state.rope.state === 'HELD') {
         if (input.attack && p.attackCooldown <= 0) {
@@ -623,21 +917,18 @@ export class GameEngine {
           this.state.rope.vx = Math.cos(p.angle) * throwSpeed;
           this.state.rope.vy = Math.sin(p.angle) * throwSpeed;
         }
-
         if (input.interact) {
           this.dropRope(p.x, p.y);
         }
       } else if (this.state.rope.state === 'ATTACHED') {
-        // Explicit pull action: input.pull or floor tackle key
         if (input.pull || (input.tackle && p.state === 'ON_FLOOR')) {
           this.pullRopeTarget(p);
         } else if (input.interact) {
-          // Explicit release of attached victim
           this.dropRope();
         }
       }
-    } else {
-      // Throw basic rock if not holding rope
+    } else if (!p.carryingLadderId) {
+      // Throw rock if not holding rope or ladder
       if (input.attack && p.attackCooldown <= 0 && p.rocks > 0) {
         p.rocks--;
         p.attackCooldown = 0.8;
@@ -661,7 +952,6 @@ export class GameEngine {
 
     player.health = Math.max(0, player.health - amount);
 
-    // Taking damage interrupts climbing grabs
     if (player.climbGrabbingId) {
       this.releaseClimbGrab(player, true);
     }
@@ -672,10 +962,14 @@ export class GameEngine {
     if (player.health <= 0) {
       player.health = 0;
       player.state = 'DEAD';
-      player.vy = 300; // Drop to floor
+      player.vy = 300;
       this.emitSound({ type: 'FALL_IMPACT', x: player.x, y: player.y });
 
-      // Clean up rope if dead player was involved
+      // Drop carried ladder on death
+      if (player.carryingLadderId) {
+        this.dropLadder(player);
+      }
+
       if (this.state.rope.heldByPlayerId === player.id || this.state.rope.attachedPlayerId === player.id) {
         this.dropRope();
       }
@@ -724,7 +1018,6 @@ export class GameEngine {
       }
     }
 
-    // Phase management
     if (this.state.phase === 'WAITING_SIGNAL') {
       this.updateWaitingPhase();
     } else if (this.state.phase === 'SIGNAL_ACTIVE') {
@@ -736,55 +1029,38 @@ export class GameEngine {
       }
     }
 
-    // Physics & Hazard updates
     this.updateObstacles();
     this.updateFallingRocks();
     this.updateRopePhysics();
     this.updateProjectiles();
     this.updatePlayersPhysics();
+    this.updateCarriedLadders();
     this.resolveEscapeAttempts();
 
     this.flushSoundEvents();
   }
 
+  /** Update positions of carried ladders to follow carriers */
+  private updateCarriedLadders(): void {
+    for (const ladder of this.state.ladders) {
+      if (ladder.state !== 'CARRIED' || !ladder.carriedByPlayerId) continue;
+      const carrier = this.state.players.find(p => p.id === ladder.carriedByPlayerId);
+      if (!carrier || carrier.state === 'DEAD' || carrier.hasEscaped) {
+        // Auto-drop on death/escape
+        ladder.state = 'PLACED';
+        ladder.carriedByPlayerId = null;
+        ladder.isPlaced = this.validateLadderPlacement(ladder);
+        if (carrier) carrier.carryingLadderId = null;
+        continue;
+      }
+      ladder.x = carrier.x;
+      ladder.y = carrier.y - ladder.height;
+    }
+  }
+
   public updateObstacles(): void {
     for (const obs of this.state.obstacles) {
-      if (obs.type === 'STEAM_VENT') {
-        obs.timer -= DT;
-        if (obs.state === 'IDLE') {
-          if (obs.timer <= 0) {
-            obs.state = 'WARNING';
-            obs.timer = 1.5;
-            this.emitSound({ type: 'STEAM_HISS', x: obs.x, y: obs.y });
-          }
-        } else if (obs.state === 'WARNING') {
-          if (obs.timer <= 0) {
-            obs.state = 'ACTIVE';
-            obs.timer = 2.5;
-            this.emitSound({ type: 'STEAM_BURST', x: obs.x, y: obs.y });
-          }
-        } else if (obs.state === 'ACTIVE') {
-          // Check collision with players in vertical steam column
-          for (const p of this.state.players) {
-            if (p.state === 'DEAD' || p.hasEscaped) continue;
-            if (p.x >= obs.x - 14 && p.x <= obs.x + obs.width + 14 && p.y >= obs.y - obs.height && p.y <= FLOOR_Y + 10) {
-              if (p.hazardCooldown <= 0) {
-                p.hazardCooldown = 0.5;
-                this.damagePlayer(p, 15);
-                p.vy = -240;
-                p.vx = -120;
-                p.isGrounded = false;
-                p.state = 'FALLING';
-                p.stunnedTimer = Math.max(p.stunnedTimer, 0.4);
-              }
-            }
-          }
-          if (obs.timer <= 0) {
-            obs.state = 'IDLE';
-            obs.timer = 4.0;
-          }
-        }
-      } else if (obs.type === 'MOVING_BARRIER') {
+      if (obs.type === 'MOVING_BARRIER') {
         if (obs.vy !== undefined && obs.minY !== undefined && obs.maxY !== undefined) {
           obs.y += obs.vy * DT;
           if (obs.y >= obs.maxY) {
@@ -805,12 +1081,12 @@ export class GameEngine {
     this.ceilingRockTimer -= DT;
     if (this.ceilingRockTimer <= 0) {
       this.ceilingRockTimer = 11 + Math.random() * 6;
-      // Spawn a new rock with warning phase at random position along ceiling
-      const rockX = 220 + Math.random() * 620;
+      // Rocks fall in the main area (not too far right in unexplored zones)
+      const rockX = 300 + Math.random() * 1200;
       this.state.fallingRocks.push({
         id: `rock_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
         x: rockX,
-        y: 85,
+        y: 35,
         vy: 0,
         warningTimer: 1.2,
         active: true
@@ -819,14 +1095,12 @@ export class GameEngine {
 
     for (const rock of this.state.fallingRocks) {
       if (!rock.active) continue;
-
       if (rock.warningTimer > 0) {
         rock.warningTimer -= DT;
       } else {
         rock.vy += 620 * DT;
         rock.y += rock.vy * DT;
 
-        // Player collision
         for (const p of this.state.players) {
           if (p.state === 'DEAD' || p.hasEscaped) continue;
           const dist = Math.hypot(p.x - rock.x, (p.y - 15) - rock.y);
@@ -841,7 +1115,6 @@ export class GameEngine {
           }
         }
 
-        // Floor impact
         if (rock.y >= FLOOR_Y - 8) {
           rock.active = false;
           this.emitSound({ type: 'ROCK_FALL', x: rock.x, y: FLOOR_Y });
@@ -853,7 +1126,6 @@ export class GameEngine {
   }
 
   private flushSoundEvents(): void {
-    // Deliver all accumulated sound events to the broadcast state, then clear the buffer
     this.state.soundEvents = [...this.pendingSoundEvents];
     this.pendingSoundEvents = [];
   }
@@ -895,26 +1167,21 @@ export class GameEngine {
   private updateSignalActivePhase(): void {
     this.signalWindowTimer -= DT;
     this.state.signalWindowRemaining = Math.max(0, Math.ceil(this.signalWindowTimer));
-
     if (this.signalWindowTimer <= 0) {
       this.closeHatch('WINDOW_EXPIRED');
     }
   }
 
   public resolveEscapeAttempts(): void {
-    // Gather all living unescaped players currently at or past the exit threshold hanging on ceiling pipe
-    const candidates = this.state.players.filter(p => 
-      !p.hasEscaped && 
-      p.state === 'HANGING_H_PIPE' && 
-      p.x <= H_PIPE_EXIT_X && 
+    const candidates = this.state.players.filter(p =>
+      !p.hasEscaped &&
+      p.state === 'HANGING_H_PIPE' &&
+      p.x <= H_PIPE_EXIT_X &&
       p.health > 0
     );
 
     if (candidates.length === 0) return;
 
-    // Strictly deterministic sort:
-    // 1. Primary: x coordinate ascending (furthest into the hatch duct first)
-    // 2. Secondary: id ascending (guaranteed deterministic tiebreaker across platforms)
     candidates.sort((a, b) => {
       if (a.x !== b.x) return a.x - b.x;
       return a.id.localeCompare(b.id);
@@ -928,7 +1195,6 @@ export class GameEngine {
 
     for (const player of candidates) {
       if (availableSlots > 0 && this.state.signalEscapedCount < this.state.signalQuota) {
-        // Escaped!
         player.hasEscaped = true;
         player.state = 'ESCAPED';
         const mins = Math.floor((600 - this.matchTimer) / 60);
@@ -941,12 +1207,11 @@ export class GameEngine {
 
         this.emitSound({ type: 'ESCAPE', x: player.x, y: player.y });
 
-        // Clean up rope if escaping player held or was attached to it
+        if (player.carryingLadderId) this.dropLadder(player);
         if (this.state.rope.heldByPlayerId === player.id || this.state.rope.attachedPlayerId === player.id) {
           this.dropRope();
         }
       } else {
-        // Quota exhausted or hatch not active -> Overseer snipes violator!
         this.snipePlayer(player, 'QUOTA_VIOLATED');
       }
     }
@@ -956,7 +1221,7 @@ export class GameEngine {
     }
   }
 
-  public attemptEscape(player?: Player): void {
+  public attemptEscape(_player?: Player): void {
     this.resolveEscapeAttempts();
   }
 
@@ -993,37 +1258,52 @@ export class GameEngine {
       const prevY = rope.y;
       rope.x += rope.vx * DT;
       rope.y += rope.vy * DT;
-      rope.vy += 280 * DT; // Slight gravity on thrown rope
+      rope.vy += 280 * DT;
 
-      // Check max travel range
       if (rope.startX !== undefined && rope.startY !== undefined) {
         const traveled = Math.hypot(rope.x - rope.startX, rope.y - rope.startY);
         if (traveled > (rope.maxDistance || 500)) {
-          this.dropRope(rope.x, FLOOR_Y);
+          this.dropRope(rope.x, this.getNearestFloorBelow(rope.x, rope.y));
           return;
         }
       }
 
-      // Chamber walls / floor collision
-      if (rope.y >= FLOOR_Y || rope.x < 30 || rope.x > CHAMBER_WIDTH - 30 || rope.y < 30) {
-        this.dropRope(Math.max(40, Math.min(CHAMBER_WIDTH - 40, rope.x)), FLOOR_Y);
+      // World bounds
+      if (rope.y >= LOWER_FLOOR_Y || rope.x < 30 || rope.x > WORLD_WIDTH - 30 || rope.y < 30) {
+        this.dropRope(
+          Math.max(100, Math.min(WORLD_WIDTH - 100, rope.x)),
+          this.getNearestFloorBelow(rope.x, rope.y)
+        );
         return;
       }
 
-      // Check collision with solid moving barrier
+      // Check collision with solid maze walls
+      for (const wall of MAZE_WALLS) {
+        if (!wall.solid) continue;
+        if (segmentIntersectsRect(prevX, prevY, rope.x, rope.y, wall.x, wall.y, wall.width, wall.height)) {
+          this.dropRope(rope.x, this.getNearestFloorBelow(rope.x, rope.y));
+          return;
+        }
+      }
+
+      // Check collision with moving barrier
       const barrier = this.state.obstacles.find(o => o.type === 'MOVING_BARRIER');
       if (barrier && segmentIntersectsRect(prevX, prevY, rope.x, rope.y, barrier.x, barrier.y, barrier.width, barrier.height)) {
-        this.dropRope(rope.x, FLOOR_Y);
+        this.dropRope(rope.x, this.getNearestFloorBelow(rope.x, rope.y));
         return;
       }
 
-      // Check collision with ALL other living players (standing, climbing, hanging, falling)
+      // Check player collision for attachment
       for (const p of this.state.players) {
         if (p.id === rope.heldByPlayerId || p.state === 'DEAD' || p.hasEscaped) continue;
         const dist = Math.hypot(p.x - rope.x, (p.y - 15) - rope.y);
         if (dist < 36) {
-          // Check line-of-sight: solid barrier cannot block rope attachment
-          if (barrier && segmentIntersectsRect(rope.startX || rope.x, rope.startY || rope.y, p.x, p.y - 15, barrier.x, barrier.y, barrier.width, barrier.height)) {
+          // Line-of-sight check through barriers
+          if (barrier && segmentIntersectsRect(
+            rope.startX || rope.x, rope.startY || rope.y,
+            p.x, p.y - 15,
+            barrier.x, barrier.y, barrier.width, barrier.height
+          )) {
             continue;
           }
           rope.state = 'ATTACHED';
@@ -1032,8 +1312,14 @@ export class GameEngine {
           rope.y = p.y - 15;
           rope.pullDamageCooldown = 0;
           this.emitSound({ type: 'ROPE_ATTACH', x: p.x, y: p.y });
-          break;
+          return;
         }
+      }
+
+      // Main floor / platform landing
+      if (rope.y >= FLOOR_Y) {
+        this.dropRope(Math.max(100, Math.min(WORLD_WIDTH - 100, rope.x)), FLOOR_Y);
+        return;
       }
     } else if (rope.state === 'ATTACHED') {
       const holder = this.state.players.find(p => p.id === rope.heldByPlayerId);
@@ -1045,7 +1331,6 @@ export class GameEngine {
         rope.x = holder.x;
         rope.y = holder.y - 15;
 
-        // Tether constraint: prevent victim from running further than max rope length
         const dx = target.x - holder.x;
         const dy = target.y - holder.y;
         const dist = Math.hypot(dx, dy);
@@ -1062,6 +1347,23 @@ export class GameEngine {
     }
   }
 
+  /** Find the nearest floor surface below a given world coordinate */
+  private getNearestFloorBelow(worldX: number, worldY: number): number {
+    // Check if in the pit gap
+    if (worldX >= 2200 && worldX <= 2400) return LOWER_FLOOR_Y;
+    // Check platforms
+    let nearestY = FLOOR_Y;
+    for (const wall of MAZE_WALLS) {
+      if (!wall.isPlatform && !wall.solid) continue;
+      if (worldX >= wall.x && worldX <= wall.x + wall.width) {
+        if (wall.y > worldY && wall.y < nearestY) {
+          nearestY = wall.y;
+        }
+      }
+    }
+    return nearestY;
+  }
+
   public pullRopeTarget(holder: Player): void {
     const rope = this.state.rope;
     const target = this.state.players.find(p => p.id === rope.attachedPlayerId);
@@ -1074,9 +1376,7 @@ export class GameEngine {
     const nx = dx / dist;
     const ny = dy / dist;
 
-    // Pull victim toward holder
-    if (target.state === 'CLIMBING_V_PIPE' || target.state === 'HANGING_H_PIPE') {
-      // Violent yank off pipe into falling freefall!
+    if (target.state === 'CLIMBING_V_PIPE' || target.state === 'HANGING_H_PIPE' || target.state === 'CLIMBING_LADDER') {
       target.state = 'FALLING';
       target.isGrounded = false;
       target.stunnedTimer = 0.8;
@@ -1087,14 +1387,12 @@ export class GameEngine {
       this.emitSound({ type: 'FALL_IMPACT', x: target.x, y: target.y });
       this.dropRope();
     } else {
-      // Continuous dragging toward holder with clamped velocities
       const dragSpeed = 240;
       target.vx = Math.max(-280, Math.min(280, nx * dragSpeed));
       target.vy = Math.max(-180, Math.min(180, ny * 120 - 30));
 
-      // Separate continuous pulling movement from discrete damage events
       if (!rope.pullDamageCooldown || rope.pullDamageCooldown <= 0) {
-        rope.pullDamageCooldown = 1.0; // 1-second cooldown between damage pulls
+        rope.pullDamageCooldown = 1.0;
         this.damagePlayer(target, 10, holder);
         target.stunnedTimer = Math.max(target.stunnedTimer, 0.3);
         this.emitSound({ type: 'ROPE_PULL', x: target.x, y: target.y });
@@ -1112,7 +1410,7 @@ export class GameEngine {
     rope.vx = 0;
     rope.vy = 0;
     rope.y = y !== undefined ? y : FLOOR_Y;
-    rope.x = x !== undefined ? Math.max(100, Math.min(850, x)) : Math.max(100, Math.min(850, rope.x));
+    rope.x = x !== undefined ? Math.max(100, Math.min(WORLD_WIDTH - 100, x)) : Math.max(100, Math.min(WORLD_WIDTH - 100, rope.x));
   }
 
   private updateProjectiles(): void {
@@ -1130,29 +1428,35 @@ export class GameEngine {
         if (dist < 26) {
           hit = true;
           const thrower = this.state.players.find(x => x.id === proj.ownerId);
-
-          if (p.state === 'CLIMBING_V_PIPE' || p.state === 'HANGING_H_PIPE') {
+          if (p.state === 'CLIMBING_V_PIPE' || p.state === 'HANGING_H_PIPE' || p.state === 'CLIMBING_LADDER') {
             p.state = 'FALLING';
             p.vy = 180;
           }
           p.stunnedTimer = 1.5;
-
           this.damagePlayer(p, 25, thrower);
           this.emitSound({ type: 'ROCK_HIT', x: p.x, y: p.y });
           break;
         }
       }
 
-      if (hit || proj.lifetime <= 0 || proj.y >= FLOOR_Y || proj.x < 30 || proj.x > CHAMBER_WIDTH - 30) {
+      // Check wall collision for projectiles
+      for (const wall of MAZE_WALLS) {
+        if (!wall.solid) continue;
+        if (proj.x >= wall.x && proj.x <= wall.x + wall.width &&
+            proj.y >= wall.y && proj.y <= wall.y + wall.height) {
+          hit = true;
+          break;
+        }
+      }
+
+      if (hit || proj.lifetime <= 0 || proj.y >= LOWER_FLOOR_Y || proj.x < 30 || proj.x > WORLD_WIDTH - 30) {
         this.state.projectiles.splice(i, 1);
       }
     }
   }
 
   private updatePlayersPhysics(): void {
-    const catwalk = this.state.obstacles.find(o => o.type === 'PLATFORM');
     const barrier = this.state.obstacles.find(o => o.type === 'MOVING_BARRIER');
-    const spikes = this.state.obstacles.find(o => o.type === 'SPIKES');
 
     for (const p of this.state.players) {
       if (p.state === 'DEAD' || p.hasEscaped) continue;
@@ -1164,19 +1468,18 @@ export class GameEngine {
       if (p.climbKickTimer > 0) p.climbKickTimer -= DT;
       if (p.hazardCooldown > 0) p.hazardCooldown -= DT;
 
-      // Handle active climbing grab maintenance and stamina drain
+      // Climbing grab maintenance
       if (p.climbGrabbingId) {
         const victim = this.state.players.find(x => x.id === p.climbGrabbingId);
-        if (!victim || victim.state === 'DEAD' || victim.hasEscaped || p.stunnedTimer > 0 || (p.state !== 'CLIMBING_V_PIPE' && p.state !== 'HANGING_H_PIPE')) {
+        if (!victim || victim.state === 'DEAD' || victim.hasEscaped || p.stunnedTimer > 0 ||
+            (p.state !== 'CLIMBING_V_PIPE' && p.state !== 'HANGING_H_PIPE' && p.state !== 'CLIMBING_LADDER')) {
           this.releaseClimbGrab(p, true);
         } else {
-          // Attacker drains stamina while holding victim
           p.stamina = Math.max(0, p.stamina - 14 * DT);
           if (p.stamina <= 0) {
             this.releaseClimbGrab(p, true);
             p.climbAttackCooldown = 1.0;
           } else {
-            // Keep victim attached beneath attacker
             victim.x = p.x;
             victim.y = p.y + 42;
             victim.vx = 0;
@@ -1200,60 +1503,87 @@ export class GameEngine {
         }
       }
 
-      // Falling physics
+      // ── FALLING PHYSICS ─────────────────────────────────────────────────
       if (p.state === 'FALLING') {
         p.vy += GRAVITY * DT;
         p.x += p.vx * DT;
         p.y += p.vy * DT;
 
-        // Catwalk Platform Collision (landing on top surface)
-        if (catwalk && p.vy > 0) {
-          if (p.y >= catwalk.y - 8 && p.y <= catwalk.y + 16 && p.x >= catwalk.x - 10 && p.x <= catwalk.x + catwalk.width + 10) {
-            p.y = catwalk.y;
-            p.vy = 0;
-            p.vx = 0;
-            p.isGrounded = true;
-            p.state = p.stunnedTimer > 0 ? 'STUNNED' : 'ON_FLOOR';
-            this.emitSound({ type: 'FALL_IMPACT', x: p.x, y: p.y });
-          }
-        }
-
-        // Concrete Floor Collision
-        if (p.y >= FLOOR_Y) {
-          p.y = FLOOR_Y;
+        // Check landing on maze platforms/walls
+        const landingY = getPlayerLandingY(p.x, p.y, p.vy, MAZE_WALLS, this.state.obstacles, this.state.ladders);
+        if (landingY !== null && p.vy > 0) {
+          p.y = landingY;
           p.vy = 0;
           p.vx = 0;
           p.isGrounded = true;
           p.state = p.stunnedTimer > 0 ? 'STUNNED' : 'ON_FLOOR';
           this.emitSound({ type: 'FALL_IMPACT', x: p.x, y: p.y });
         }
+
+        // Main floor collision
+        const floorY = getNearestFloorY(p.x, p.y);
+        if (p.y >= floorY && p.vy > 0) {
+          p.y = floorY;
+          p.vy = 0;
+          p.vx = 0;
+          p.isGrounded = true;
+          p.state = p.stunnedTimer > 0 ? 'STUNNED' : 'ON_FLOOR';
+          this.emitSound({ type: 'FALL_IMPACT', x: p.x, y: p.y });
+        }
+
+        // Lower basement floor
+        if (p.y >= LOWER_FLOOR_Y) {
+          p.y = LOWER_FLOOR_Y;
+          p.vy = 0;
+          p.vx = 0;
+          p.isGrounded = true;
+          p.state = p.stunnedTimer > 0 ? 'STUNNED' : 'ON_FLOOR';
+          this.emitSound({ type: 'FALL_IMPACT', x: p.x, y: p.y });
+        }
+
       } else if (p.state === 'ON_FLOOR') {
         p.x += p.vx * DT;
 
-        // Check if player walked off elevated catwalk
-        if (catwalk && Math.abs(p.y - catwalk.y) < 5) {
-          if (p.x < catwalk.x - 10 || p.x > catwalk.x + catwalk.width + 10) {
-            p.isGrounded = false;
-            p.state = 'FALLING';
-          }
-        } else {
-          p.y = FLOOR_Y;
+        // Check if player walked off a platform
+        let onSurface = false;
+
+        // Check main floor
+        const floorY = getNearestFloorY(p.x, p.y);
+        if (Math.abs(p.y - floorY) < 8) {
+          onSurface = true;
+          p.y = floorY;
         }
 
-        // Spiked floor hazard check (controlled damage interval and outward knockback)
-        if (spikes && p.y >= FLOOR_Y - 4) {
-          if (p.x >= spikes.x - 2 && p.x <= spikes.x + spikes.width + 2) {
-            if (p.hazardCooldown <= 0) {
-              p.hazardCooldown = 0.6;
-              this.damagePlayer(p, 15);
-              p.vy = -180;
-              p.vx = p.x < (spikes.x + spikes.width / 2) ? -90 : 90;
-              p.isGrounded = false;
-              p.state = 'FALLING';
-              this.emitSound({ type: 'SPIKE_HIT', x: p.x, y: p.y });
+        // Check platforms
+        for (const wall of MAZE_WALLS) {
+          if (!wall.isPlatform && !wall.solid) continue;
+          if (Math.abs(p.y - wall.y) < 8) {
+            if (p.x >= wall.x - 8 && p.x <= wall.x + wall.width + 8) {
+              onSurface = true;
+              break;
             }
           }
         }
+        // Check PLATFORM obstacles
+        for (const obs of this.state.obstacles) {
+          if (obs.type === 'PLATFORM' && Math.abs(p.y - obs.y) < 8) {
+            if (p.x >= obs.x - 8 && p.x <= obs.x + obs.width + 8) {
+              onSurface = true;
+              break;
+            }
+          }
+        }
+        // Check lower basement floor
+        if (Math.abs(p.y - LOWER_FLOOR_Y) < 8) {
+          onSurface = true;
+          p.y = LOWER_FLOOR_Y;
+        }
+
+        if (!onSurface) {
+          p.isGrounded = false;
+          p.state = 'FALLING';
+        }
+
       } else if (p.state === 'CLIMBING_V_PIPE') {
         p.y += p.vy * DT;
         p.x = V_PIPE_X;
@@ -1264,6 +1594,7 @@ export class GameEngine {
             victim.y = p.y + 42;
           }
         }
+
       } else if (p.state === 'HANGING_H_PIPE') {
         p.x += p.vx * DT;
         p.y = H_PIPE_Y + 15;
@@ -1274,9 +1605,13 @@ export class GameEngine {
             victim.y = p.y + 42;
           }
         }
+
+      } else if (p.state === 'CLIMBING_LADDER') {
+        p.y += p.vy * DT;
+        // Ladder x is enforced in handleInput, just apply vy here
       }
 
-      // Moving Barrier Solid Obstacle Collision (prevent crossing through moving gate)
+      // ── MOVING BARRIER COLLISION ─────────────────────────────────────────
       if (barrier && p.y >= barrier.y - 10 && p.y <= barrier.y + barrier.height + 10) {
         if (p.x >= barrier.x - 18 && p.x <= barrier.x + barrier.width + 18) {
           const midBarrierX = barrier.x + barrier.width / 2;
@@ -1290,10 +1625,15 @@ export class GameEngine {
         }
       }
 
-      // Chamber side bounds
-      p.x = Math.max(50, Math.min(CHAMBER_WIDTH - 50, p.x));
+      // ── SOLID WALL HORIZONTAL COLLISION ──────────────────────────────────
+      if (p.state === 'ON_FLOOR' || p.state === 'FALLING' || p.state === 'STUNNED') {
+        p.x = resolveHorizontalWallCollision(p.x, p.y, 14, MAZE_WALLS);
+      }
 
-      // Melee / Tackle collision between players on floor
+      // ── WORLD BOUNDS ─────────────────────────────────────────────────────
+      p.x = Math.max(35, Math.min(WORLD_WIDTH - 35, p.x));
+
+      // ── MELEE TACKLE COLLISION ───────────────────────────────────────────
       if (p.stunnedTimer > 0 && p.vx !== 0 && p.state === 'ON_FLOOR') {
         for (const other of this.state.players) {
           if (other.id === p.id || other.state === 'DEAD' || other.hasEscaped) continue;
@@ -1328,8 +1668,11 @@ export class GameEngine {
 
     player.health = 0;
     player.state = 'DEAD';
-    player.vy = 400; // Drop dead to floor
+    player.vy = 400;
 
+    if (player.carryingLadderId) {
+      this.dropLadder(player);
+    }
     if (this.state.rope.heldByPlayerId === player.id || this.state.rope.attachedPlayerId === player.id) {
       this.dropRope();
     }
