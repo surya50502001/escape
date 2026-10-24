@@ -1,0 +1,1837 @@
+{
+  "project": {
+    "title": "The Pit",
+    "document": "Technical Level Specification v1 (Corrected & Mapped)",
+    "status": "Corrected blueprint specification; validated against server physics integration (vy0 = -340 px/s, g = 750 px/s^2, dt = 1/30 s)",
+    "camera": "2D side-scrolling; horizontal movement with vertical climbing",
+    "style": "Clean 2D cartoon",
+    "team": {
+      "min_players": 2,
+      "max_players": 5,
+      "mode": "single cooperative team (with 1-3 player scalability)"
+    },
+    "coordinate_system": {
+      "units": "abstract tiles",
+      "origin": "bottom-left of each room (Y=0 is floor bottom, Y=20 is room ceiling)",
+      "x_range": [
+        0,
+        50
+      ],
+      "y_range": [
+        0,
+        20
+      ],
+      "rect_convention": "[xMin, yMin, xMax, yMax] where xMin < xMax and yMin < yMax",
+      "validation_rule": "Strict [xMin, yMin, xMax, yMax]. Rectangles with xMin >= xMax or yMin >= yMax are strictly rejected and invalid.",
+      "physics_scale": "1 abstract tile = 32 px. Normal jump apex = 71.5 px (2.23 tiles). Cooperative launch boost = 171.7 px (5.36 tiles) with v_boost = -520 px/s."
+    },
+    "global_rules": [
+      "Server Authority: Server is authoritative for movement, collision, interactions, inventory, guard states, puzzle logic, and transitions.",
+      "One Carried Item: A player may carry at most one item. Pickup, drop, and handoff operations are atomic server-side transactions.",
+      "Safe Disconnect Drop: Items held by a disconnecting player return to the nearest valid grounded platform directly below them; items are never destroyed or duplicated.",
+      "Room Persistence: Visited room states (opened boxes, moved panels, deployed ropes, cut hatches) persist throughout the campaign session.",
+      "Guaranteed Critical Items: Mandatory progression items (Room 9 cutting tool, keys) have fixed, non-randomized locations.",
+      "No Irreversible Softlocks: Every puzzle has an anti-softlock recovery route. No puzzle requires permanent capture, impossible sprint windows, or unrecoverable item loss.",
+      "Multiplayer Transition Safety: 15-second airlock evacuation warning auto-evacuates delayed, downed, or disconnected players into the safe staging zone of the new room without bypassing puzzle triggers.",
+      "Physics Alignment: 1 abstract tile = 32 px. Normal jump apex = 71.5 px (2.23 tiles). Cooperative launch boost = 171.7 px (5.36 tiles) with v_boost = -520 px/s.",
+      "Independent Room Presence During Backtracking: A Room 10 -> Room 9 transition must not move teammates out of Room 10. The 15-second airlock applies to forward progression only. Teammates remaining in Room 10 maintain independent room presence. Captured and disconnected player behavior is a documented rule requiring later runtime design and tests; leaving such players indefinitely in a room is not assumed to be automatically safe."
+    ],
+    "movement_assumptions_to_tune": {
+      "player_hitbox_tiles": {
+        "width": 1,
+        "height": 2
+      },
+      "small_item_footprint_tiles": [
+        1,
+        1
+      ],
+      "crate_footprint_tiles": [
+        3,
+        2
+      ],
+      "door_clearance_tiles": [
+        2,
+        3
+      ],
+      "measured_physics": {
+        "gravity": "750 px/s^2",
+        "normal_jump_vy": "-340 px/s",
+        "normal_jump_apex": "71.5 px (2.23 tiles)",
+        "boost_jump_vy": "-520 px/s",
+        "boost_jump_apex": "171.7 px (5.36 tiles)",
+        "walk_speed": "190 px/s (5.94 tiles/s)"
+      }
+    },
+    "rooms": [
+      {
+        "id": 1,
+        "name": "Cell",
+        "bounds": {
+          "x": [
+            0,
+            50
+          ],
+          "y": [
+            0,
+            20
+          ]
+        },
+        "geometry": [
+          {
+            "id": "main_floor",
+            "type": "platform",
+            "rect": [
+              0,
+              2,
+              50,
+              3
+            ],
+            "mandatory": true,
+            "description": "Full room floor prevents void falls. Top surface at Y=3."
+          },
+          {
+            "id": "entry_spawn",
+            "type": "safe_zone",
+            "rect": [
+              4,
+              3,
+              8,
+              5
+            ],
+            "mandatory": true,
+            "description": "Campaign start spawn zone on main floor."
+          },
+          {
+            "id": "boost_zone",
+            "type": "safe_zone",
+            "rect": [
+              8,
+              3,
+              14,
+              5
+            ],
+            "mandatory": true,
+            "description": "Designated area for cooperative boost action."
+          },
+          {
+            "id": "upper_ledge",
+            "type": "platform",
+            "rect": [
+              18,
+              7,
+              36,
+              8
+            ],
+            "mandatory": true,
+            "description": "Top surface at Y=8 (160 px / 5 tiles above floor at Y=3). Reachable via boost from boost_zone [8, 3, 14, 5]."
+          },
+          {
+            "id": "walkway",
+            "type": "platform",
+            "rect": [
+              36,
+              7,
+              50,
+              8
+            ],
+            "mandatory": true,
+            "description": "Extends upper ledge to exit door."
+          },
+          {
+            "id": "rope_anchor",
+            "type": "anchor",
+            "point": [
+              31,
+              8
+            ],
+            "mandatory": true,
+            "description": "Anchor to drop a climbable rope down to Y=3 floor."
+          },
+          {
+            "id": "exit_door",
+            "type": "door",
+            "rect": [
+              47,
+              8,
+              49,
+              11
+            ],
+            "mandatory": true,
+            "description": "Clearance 2x3 tiles on upper walkway."
+          }
+        ],
+        "transition": {
+          "entry": "Initial campaign spawn at [4, 3, 8, 5]",
+          "exit_mapping": "Room 1 exit_door [47, 8, 49, 11] -> Airlock 1-2 (stair descent) -> Room 2 entry_door [0, 3, 2, 6]"
+        },
+        "items": [],
+        "solution": [
+          "In boost_zone, a player receives a cooperative boost (v_boost = -520 px/s) to reach the upper ledge at Y=8.",
+          "The elevated player moves to rope_anchor ([31, 8]) and deploys a climbable rope down to Y=3.",
+          "Remaining players climb the rope up to the walkway; all regroup at exit_door to transition."
+        ],
+        "recovery": [
+          "Full-width floor catches missed jumps without fall hazard or void drop.",
+          "Failed boosts reset player positions to boost_zone.",
+          "Scalability: Works with 2-5 players."
+        ],
+        "state": [
+          "anchor_secured",
+          "rope_deployed",
+          "players_in_exit_zone"
+        ],
+        "open_questions": [
+          "Validate in-engine landing physics and friction when arriving at Y=8 from -520 px/s launch onto upper_ledge [18, 7, 36, 8] (physical landing validation remains pending in Phase 2)."
+        ]
+      },
+      {
+        "id": 2,
+        "name": "First Climb",
+        "bounds": {
+          "x": [
+            0,
+            50
+          ],
+          "y": [
+            0,
+            20
+          ]
+        },
+        "geometry": [
+          {
+            "id": "main_floor",
+            "type": "platform",
+            "rect": [
+              0,
+              2,
+              50,
+              3
+            ],
+            "mandatory": true,
+            "description": "Full room floor at Y=3."
+          },
+          {
+            "id": "entry_door",
+            "type": "door",
+            "rect": [
+              0,
+              3,
+              2,
+              6
+            ],
+            "mandatory": true,
+            "description": "Ground floor entry door from Airlock 1-2."
+          },
+          {
+            "id": "safe_zone",
+            "type": "safe_zone",
+            "rect": [
+              2,
+              3,
+              6,
+              5
+            ],
+            "mandatory": true,
+            "description": "Safe arrival staging zone."
+          },
+          {
+            "id": "crate",
+            "type": "movable",
+            "rect": [
+              16,
+              3,
+              19,
+              5
+            ],
+            "mandatory": true,
+            "description": "Movable 3x2 crate (surface Y=5). Pushable to mid_platform."
+          },
+          {
+            "id": "chair",
+            "type": "movable",
+            "rect": [
+              11,
+              3,
+              12,
+              4
+            ],
+            "mandatory": false,
+            "description": "Optional 1x1 movable chair on floor."
+          },
+          {
+            "id": "mid_platform",
+            "type": "platform",
+            "rect": [
+              23,
+              6,
+              31,
+              7
+            ],
+            "mandatory": true,
+            "description": "Intermediate stepping platform with top surface at Y=7."
+          },
+          {
+            "id": "upper_ledge",
+            "type": "platform",
+            "rect": [
+              33,
+              8,
+              50,
+              9
+            ],
+            "mandatory": true,
+            "description": "Raised upper ledge with top surface at Y=9."
+          },
+          {
+            "id": "reset_lever",
+            "type": "switch",
+            "point": [
+              12,
+              3
+            ],
+            "mandatory": true,
+            "description": "Reset switch returning crate to [16, 3, 19, 5]."
+          },
+          {
+            "id": "exit_door",
+            "type": "door",
+            "rect": [
+              47,
+              9,
+              49,
+              12
+            ],
+            "mandatory": true,
+            "description": "Upper exit door on raised ledge at Y=9."
+          }
+        ],
+        "transition": {
+          "entry": "Room 2 entry_door [0, 3, 2, 6] (arriving from Room 1)",
+          "exit_mapping": "Room 2 exit_door [47, 9, 49, 12] -> Airlock 2-3 (stair descent) -> Room 3 entry_door [0, 3, 2, 6]"
+        },
+        "items": [],
+        "solution": [
+          "Push crate rightward from [16, 3, 19, 5] against mid_platform [23, 6, 31, 7].",
+          "Jump from floor (Y=3) onto crate (Y=5, deltaY = 64 px <= 71.5 px).",
+          "Jump from crate (Y=5) onto mid_platform (Y=7, deltaY = 64 px <= 71.5 px).",
+          "Jump from mid_platform (Y=7) across 2-tile gap to upper_ledge (Y=9, deltaY = 64 px, deltaX = 64 px).",
+          "All players can traverse sequentially without team boosts or box stacking; regroup at exit door."
+        ],
+        "recovery": [
+          "Full-width floor catches missed jumps.",
+          "Reset lever at [12, 3] restores crate position if wedged.",
+          "Crate position is persistent once placed, allowing all teammates to climb safely."
+        ],
+        "state": [
+          "crate_transform",
+          "chair_transform",
+          "room_completed"
+        ],
+        "open_questions": [
+          "Validate crate push friction and mass against horizontal player collision."
+        ]
+      },
+      {
+        "id": 3,
+        "name": "Sleeping Guard",
+        "bounds": {
+          "x": [
+            0,
+            50
+          ],
+          "y": [
+            0,
+            20
+          ]
+        },
+        "geometry": [
+          {
+            "id": "main_floor",
+            "type": "platform",
+            "rect": [
+              0,
+              2,
+              50,
+              3
+            ],
+            "mandatory": true,
+            "description": "Floor at Y=3."
+          },
+          {
+            "id": "entry_door",
+            "type": "door",
+            "rect": [
+              0,
+              3,
+              2,
+              6
+            ],
+            "mandatory": true,
+            "description": "Ground floor entry door from Airlock 2-3."
+          },
+          {
+            "id": "safe_zone",
+            "type": "safe_zone",
+            "rect": [
+              2,
+              3,
+              6,
+              5
+            ],
+            "mandatory": true,
+            "description": "Safe arrival staging zone."
+          },
+          {
+            "id": "cover_a",
+            "type": "cover",
+            "rect": [
+              14,
+              3,
+              18,
+              5
+            ],
+            "mandatory": true,
+            "description": "First solid cover block."
+          },
+          {
+            "id": "cover_b",
+            "type": "cover",
+            "rect": [
+              30,
+              3,
+              34,
+              5
+            ],
+            "mandatory": true,
+            "description": "Second solid cover block."
+          },
+          {
+            "id": "guard",
+            "type": "guard_spawn",
+            "point": [
+              24,
+              3
+            ],
+            "mandatory": true,
+            "description": "Sleeping guard position."
+          },
+          {
+            "id": "noisy_crate",
+            "type": "movable",
+            "rect": [
+              19,
+              3,
+              21,
+              4
+            ],
+            "mandatory": false,
+            "description": "Crate that makes noise if pushed."
+          },
+          {
+            "id": "bypass_ledge",
+            "type": "platform",
+            "rect": [
+              21,
+              7,
+              31,
+              8
+            ],
+            "mandatory": false,
+            "description": "High route bypass above sleeping guard."
+          },
+          {
+            "id": "bypass_pipe",
+            "type": "climbable",
+            "rect": [
+              21,
+              3,
+              22,
+              8
+            ],
+            "mandatory": false,
+            "description": "Optional vertical climbable pipe providing direct access from floor (Y=3) to bypass_ledge (Y=8)."
+          },
+          {
+            "id": "exit_door",
+            "type": "door",
+            "rect": [
+              47,
+              3,
+              49,
+              6
+            ],
+            "mandatory": true,
+            "description": "Ground-level exit door."
+          }
+        ],
+        "transition": {
+          "entry": "Room 3 entry_door [0, 3, 2, 6] (arriving from Room 2)",
+          "exit_mapping": "Room 3 exit_door [47, 3, 49, 6] -> Horizontal corridor -> Room 4 entry_door [0, 3, 2, 6]"
+        },
+        "items": [],
+        "solution": [
+          "Sneak past sleeping guard using cover or the upper bypass ledge."
+        ],
+        "recovery": [
+          "Captured players are placed in holding nook at [2, 3] and can be released by teammates or timeout."
+        ],
+        "state": [
+          "guard_alert_state",
+          "guard_patrol_phase",
+          "capture_flags"
+        ],
+        "open_questions": [
+          "Tune guard wake-up noise radius and alert duration in-engine.",
+          "Verify bypass_pipe [21, 3, 22, 8] interaction with existing climbable-object mechanics before claiming the route is playable."
+        ]
+      },
+      {
+        "id": 4,
+        "name": "Sweeping Searchlight",
+        "bounds": {
+          "x": [
+            0,
+            50
+          ],
+          "y": [
+            0,
+            20
+          ]
+        },
+        "geometry": [
+          {
+            "id": "main_floor",
+            "type": "platform",
+            "rect": [
+              0,
+              2,
+              50,
+              3
+            ],
+            "mandatory": true,
+            "description": "Floor at Y=3."
+          },
+          {
+            "id": "entry_door",
+            "type": "door",
+            "rect": [
+              0,
+              3,
+              2,
+              6
+            ],
+            "mandatory": true,
+            "description": "Ground floor entry door from Room 3."
+          },
+          {
+            "id": "safe_zone",
+            "type": "safe_zone",
+            "rect": [
+              2,
+              3,
+              6,
+              5
+            ],
+            "mandatory": true,
+            "description": "Safe arrival staging zone."
+          },
+          {
+            "id": "cover_a",
+            "type": "cover",
+            "rect": [
+              12,
+              3,
+              16,
+              6
+            ],
+            "mandatory": true,
+            "description": "Tall solid cover blocking light."
+          },
+          {
+            "id": "cover_b",
+            "type": "cover",
+            "rect": [
+              29,
+              3,
+              33,
+              6
+            ],
+            "mandatory": true,
+            "description": "Second tall solid cover."
+          },
+          {
+            "id": "beam_sweep",
+            "type": "hazard_path",
+            "x_range": [
+              5,
+              45
+            ],
+            "y": 3,
+            "cycle_seconds": 8,
+            "mandatory": true,
+            "description": "Sweeping searchlight beam path across floor."
+          },
+          {
+            "id": "exit_door",
+            "type": "door",
+            "rect": [
+              47,
+              3,
+              49,
+              6
+            ],
+            "mandatory": true,
+            "description": "Ground-level exit door."
+          }
+        ],
+        "transition": {
+          "entry": "Room 4 entry_door [0, 3, 2, 6] (arriving from Room 3)",
+          "exit_mapping": "Room 4 exit_door [47, 3, 49, 6] -> Horizontal corridor -> Room 5 entry_door [0, 3, 2, 6]"
+        },
+        "items": [],
+        "solution": [
+          "Move between cover positions during dark sweep intervals."
+        ],
+        "recovery": [
+          "Detection raises alert timer but does not instant-kill; cover occlusion is verified server-side."
+        ],
+        "state": [
+          "beam_phase",
+          "beam_timer",
+          "player_alert_state"
+        ],
+        "open_questions": [
+          "Validate server-side line-of-sight polygon occlusion against cover blocks."
+        ]
+      },
+      {
+        "id": 5,
+        "name": "Hidden Compartment",
+        "bounds": {
+          "x": [
+            0,
+            50
+          ],
+          "y": [
+            0,
+            20
+          ]
+        },
+        "geometry": [
+          {
+            "id": "main_floor",
+            "type": "platform",
+            "rect": [
+              0,
+              2,
+              50,
+              3
+            ],
+            "mandatory": true,
+            "description": "Floor at Y=3."
+          },
+          {
+            "id": "entry_door",
+            "type": "door",
+            "rect": [
+              0,
+              3,
+              2,
+              6
+            ],
+            "mandatory": true,
+            "description": "Ground floor entry door from Room 4."
+          },
+          {
+            "id": "safe_zone",
+            "type": "safe_zone",
+            "rect": [
+              2,
+              3,
+              6,
+              5
+            ],
+            "mandatory": true,
+            "description": "Safe arrival staging zone."
+          },
+          {
+            "id": "movable_panel",
+            "type": "movable_panel",
+            "rect": [
+              25,
+              3,
+              27,
+              6
+            ],
+            "mandatory": false,
+            "description": "Sliding wall panel hiding secret recess."
+          },
+          {
+            "id": "exit_door",
+            "type": "door",
+            "rect": [
+              47,
+              3,
+              49,
+              6
+            ],
+            "mandatory": true,
+            "description": "Ground-level exit door aligning with Room 6 entry."
+          }
+        ],
+        "transition": {
+          "entry": "Room 5 entry_door [0, 3, 2, 6] (arriving from Room 4)",
+          "exit_mapping": "Room 5 exit_door [47, 3, 49, 6] -> Direct ground passage -> Room 6 entry_door [0, 2, 2, 5]"
+        },
+        "items": [
+          {
+            "id": "optional_rope",
+            "type": "rope",
+            "mandatory": false,
+            "point": [
+              26,
+              3
+            ],
+            "description": "Optional rope item revealed behind panel."
+          }
+        ],
+        "solution": [
+          "Slide panel to reveal optional rope; proceed through ground exit door."
+        ],
+        "recovery": [
+          "Panel movement is reversible; primary door is accessible without opening compartment."
+        ],
+        "state": [
+          "panel_transform",
+          "compartment_revealed",
+          "optional_item_state"
+        ],
+        "open_questions": [
+          "Define panel interaction handle and sliding speed."
+        ]
+      },
+      {
+        "id": 6,
+        "name": "Vertical Shaft",
+        "bounds": {
+          "x": [
+            0,
+            25
+          ],
+          "y": [
+            0,
+            20
+          ]
+        },
+        "geometry": [
+          {
+            "id": "lower_floor",
+            "type": "platform",
+            "rect": [
+              0,
+              1,
+              25,
+              2
+            ],
+            "mandatory": true,
+            "description": "Lower foundation floor at Y=2."
+          },
+          {
+            "id": "entry_door",
+            "type": "door",
+            "rect": [
+              0,
+              2,
+              2,
+              5
+            ],
+            "mandatory": true,
+            "description": "Ground-level entry door matching Room 5 exit."
+          },
+          {
+            "id": "safe_zone",
+            "type": "safe_zone",
+            "rect": [
+              2,
+              2,
+              5,
+              4
+            ],
+            "mandatory": true,
+            "description": "Safe arrival staging zone at base of shaft."
+          },
+          {
+            "id": "pipe",
+            "type": "climbable",
+            "rect": [
+              8,
+              2,
+              9,
+              15
+            ],
+            "mandatory": true,
+            "description": "Climbable pipe ascending the shaft."
+          },
+          {
+            "id": "ladder",
+            "type": "climbable",
+            "rect": [
+              13,
+              2,
+              14,
+              15
+            ],
+            "mandatory": true,
+            "description": "Full vertical ladder."
+          },
+          {
+            "id": "recovery_platform",
+            "type": "platform",
+            "rect": [
+              7,
+              3,
+              18,
+              4
+            ],
+            "mandatory": true,
+            "description": "Platform catching missed jumps at Y=4."
+          },
+          {
+            "id": "rope_anchor",
+            "type": "anchor",
+            "point": [
+              19,
+              15
+            ],
+            "mandatory": true,
+            "description": "Upper anchor point to cross to shaft exit."
+          },
+          {
+            "id": "catwalk_exit",
+            "type": "platform",
+            "rect": [
+              21,
+              14,
+              25,
+              15
+            ],
+            "mandatory": true,
+            "description": "Upper catwalk platform supporting players at exit door at Y=15."
+          },
+          {
+            "id": "exit_door",
+            "type": "door",
+            "rect": [
+              23,
+              15,
+              25,
+              18
+            ],
+            "mandatory": true,
+            "description": "Upper exit door leading to Room 7 entry."
+          }
+        ],
+        "transition": {
+          "entry": "Room 6 entry_door [0, 2, 2, 5] (arriving from Room 5)",
+          "exit_mapping": "Room 6 exit_door [23, 15, 25, 18] -> Upper catwalk bridge -> Room 7 entry_door [0, 15, 2, 18]"
+        },
+        "items": [],
+        "solution": [
+          "Enter at ground level, climb ladder and pipe up the shaft, use rope anchor to cross to upper-right exit."
+        ],
+        "recovery": [
+          "Falls catch on recovery_platform (Y=3..4) with direct ladder access back up."
+        ],
+        "state": [
+          "climb_state",
+          "recovery_trigger_state"
+        ],
+        "open_questions": [
+          "Confirm climbing speed and rope swing arc across shaft width.",
+          "Verify catwalk_exit [21, 14, 25, 15] traversability, player collision box, ladder/rope access, and exit-door interaction in-engine."
+        ]
+      },
+      {
+        "id": 7,
+        "name": "Patrol Route",
+        "bounds": {
+          "x": [
+            0,
+            50
+          ],
+          "y": [
+            0,
+            20
+          ]
+        },
+        "geometry": [
+          {
+            "id": "main_floor",
+            "type": "platform",
+            "rect": [
+              0,
+              2,
+              50,
+              3
+            ],
+            "mandatory": true,
+            "description": "Floor at Y=3."
+          },
+          {
+            "id": "entry_door",
+            "type": "door",
+            "rect": [
+              0,
+              15,
+              2,
+              18
+            ],
+            "mandatory": true,
+            "description": "Upper entry door from Room 6."
+          },
+          {
+            "id": "entry_ladder",
+            "type": "climbable",
+            "rect": [
+              2,
+              3,
+              3,
+              15
+            ],
+            "mandatory": true,
+            "description": "Vertical ladder connecting upper entry down to main floor."
+          },
+          {
+            "id": "safe_zone",
+            "type": "safe_zone",
+            "rect": [
+              3,
+              3,
+              7,
+              5
+            ],
+            "mandatory": true,
+            "description": "Safe arrival staging zone at base of entry ladder."
+          },
+          {
+            "id": "cover_a",
+            "type": "cover",
+            "rect": [
+              10,
+              3,
+              14,
+              5
+            ],
+            "mandatory": true,
+            "description": "Cover on left patrol path."
+          },
+          {
+            "id": "cover_b",
+            "type": "cover",
+            "rect": [
+              34,
+              3,
+              38,
+              5
+            ],
+            "mandatory": true,
+            "description": "Cover on right patrol path."
+          },
+          {
+            "id": "guard_patrol",
+            "type": "patrol_path",
+            "x_range": [
+              18,
+              31
+            ],
+            "y": 3,
+            "mandatory": true,
+            "description": "Active guard patrol path."
+          },
+          {
+            "id": "distraction_item",
+            "type": "distraction",
+            "point": [
+              8,
+              3
+            ],
+            "mandatory": false,
+            "description": "Noise-making throwable stone."
+          },
+          {
+            "id": "vent_shortcut",
+            "type": "shortcut",
+            "start": [
+              14,
+              8
+            ],
+            "end": [
+              35,
+              8
+            ],
+            "noisy": true,
+            "mandatory": false,
+            "description": "Overhead duct shortcut bypassing guard patrol."
+          },
+          {
+            "id": "exit_door",
+            "type": "door",
+            "rect": [
+              47,
+              3,
+              49,
+              6
+            ],
+            "mandatory": true,
+            "description": "Ground-level exit door."
+          }
+        ],
+        "transition": {
+          "entry": "Room 7 entry_door [0, 15, 2, 18] (arriving from Room 6 upper exit; descent via entry_ladder)",
+          "exit_mapping": "Room 7 exit_door [47, 3, 49, 6] -> Horizontal corridor -> Room 8 entry_door [0, 3, 2, 6]"
+        },
+        "items": [],
+        "solution": [
+          "Descend entry ladder, sneak past patrolling guard or take high-risk vent shortcut to exit."
+        ],
+        "recovery": [
+          "Vent shortcut has exits on both sides and cannot trap players."
+        ],
+        "state": [
+          "guard_position",
+          "guard_alert_state",
+          "vent_state"
+        ],
+        "open_questions": [
+          "Verify distraction rock throwing physics with scrolling camera."
+        ]
+      },
+      {
+        "id": 8,
+        "name": "Two-Switch Puzzle",
+        "bounds": {
+          "x": [
+            0,
+            50
+          ],
+          "y": [
+            0,
+            20
+          ]
+        },
+        "geometry": [
+          {
+            "id": "main_floor",
+            "type": "platform",
+            "rect": [
+              0,
+              2,
+              50,
+              3
+            ],
+            "mandatory": true,
+            "description": "Floor at Y=3."
+          },
+          {
+            "id": "entry_door",
+            "type": "door",
+            "rect": [
+              0,
+              3,
+              2,
+              6
+            ],
+            "mandatory": true,
+            "description": "Ground floor entry door from Room 7."
+          },
+          {
+            "id": "safe_zone",
+            "type": "safe_zone",
+            "rect": [
+              2,
+              3,
+              6,
+              5
+            ],
+            "mandatory": true,
+            "description": "Safe arrival staging zone."
+          },
+          {
+            "id": "switch_a",
+            "type": "switch",
+            "point": [
+              12,
+              3
+            ],
+            "mandatory": true,
+            "description": "Pressure plate A (12s pneumatic latch in solo fallback)."
+          },
+          {
+            "id": "switch_b",
+            "type": "switch",
+            "point": [
+              36,
+              3
+            ],
+            "mandatory": true,
+            "description": "Pressure plate B."
+          },
+          {
+            "id": "crate",
+            "type": "movable",
+            "rect": [
+              24,
+              3,
+              26,
+              5
+            ],
+            "mandatory": true,
+            "description": "Heavy crate to weigh down switch."
+          },
+          {
+            "id": "reset_lever",
+            "type": "switch",
+            "point": [
+              20,
+              3
+            ],
+            "mandatory": true,
+            "description": "Reset lever returning crate to spawn."
+          },
+          {
+            "id": "exit_door",
+            "type": "door",
+            "rect": [
+              47,
+              3,
+              49,
+              6
+            ],
+            "mandatory": true,
+            "description": "Exit door with persistent unlock."
+          }
+        ],
+        "transition": {
+          "entry": "Room 8 entry_door [0, 3, 2, 6] (arriving from Room 7)",
+          "exit_mapping": "Room 8 exit_door [47, 3, 49, 6] -> Horizontal corridor -> Room 9 entry_door [0, 3, 2, 6]"
+        },
+        "items": [],
+        "solution": [
+          "Cooperative Mode: Place crate on one switch; a teammate activates the second switch.",
+          "Persistent Unlock: Once both switches are simultaneously satisfied, exit_door permanently unlocks (exit_door_unlocked = true).",
+          "Solo Player Latch Fallback: If only 1 player is active, Switch A features a 12-second pneumatic latch delay, allowing the solo player to sprint across to Switch B in 6 seconds and achieve simultaneous activation."
+        ],
+        "recovery": [
+          "Crate reset lever returns crate to spawn without resetting door progress. Door cannot crush players."
+        ],
+        "state": [
+          "switch_a_active",
+          "switch_b_active",
+          "exit_door_unlocked",
+          "crate_transform"
+        ],
+        "open_questions": [
+          "Verify pneumatic latch visual/audio countdown on Switch A."
+        ]
+      },
+      {
+        "id": 9,
+        "name": "Locked Storage",
+        "bounds": {
+          "x": [
+            0,
+            50
+          ],
+          "y": [
+            0,
+            20
+          ]
+        },
+        "geometry": [
+          {
+            "id": "main_floor",
+            "type": "platform",
+            "rect": [
+              0,
+              2,
+              50,
+              3
+            ],
+            "mandatory": true,
+            "description": "Floor at Y=3."
+          },
+          {
+            "id": "entry_door",
+            "type": "door",
+            "rect": [
+              0,
+              3,
+              2,
+              6
+            ],
+            "mandatory": true,
+            "description": "Ground floor entry door from Room 8."
+          },
+          {
+            "id": "safe_zone",
+            "type": "safe_zone",
+            "rect": [
+              2,
+              3,
+              6,
+              5
+            ],
+            "mandatory": true,
+            "description": "Safe arrival staging zone."
+          },
+          {
+            "id": "key_niche",
+            "type": "item_spawn",
+            "point": [
+              8,
+              3
+            ],
+            "mandatory": true,
+            "description": "Pedestal holding reusable master key."
+          },
+          {
+            "id": "box_a",
+            "type": "container",
+            "point": [
+              20,
+              3
+            ],
+            "mandatory": false,
+            "description": "Empty locker/box A."
+          },
+          {
+            "id": "box_b",
+            "type": "container",
+            "point": [
+              28,
+              3
+            ],
+            "mandatory": false,
+            "description": "Empty locker/box B."
+          },
+          {
+            "id": "box_c",
+            "type": "container",
+            "point": [
+              36,
+              3
+            ],
+            "mandatory": true,
+            "description": "Heavy locker C containing cutting tool."
+          },
+          {
+            "id": "exit_door",
+            "type": "door",
+            "rect": [
+              47,
+              3,
+              49,
+              6
+            ],
+            "mandatory": true,
+            "description": "Ground-level exit door to Room 10."
+          }
+        ],
+        "transition": {
+          "entry": "Room 9 entry_door [0, 3, 2, 6] (arriving from Room 8)",
+          "exit_mapping": "Room 9 exit_door [47, 3, 49, 6] -> Forward corridor -> Room 10 entry_door [0, 3, 2, 6]",
+          "backtrack_mapping": "Room 10 return_door [0, 3, 2, 6] -> Reverse corridor -> Room 9 exit_door [47, 3, 49, 6] (staging zone [43, 3, 47, 5])"
+        },
+        "items": [
+          {
+            "id": "cutting_tool",
+            "type": "cutting_tool",
+            "mandatory": true,
+            "point": [
+              36,
+              3
+            ],
+            "description": "Guaranteed cutting tool inside Box C."
+          }
+        ],
+        "solution": [
+          "Pick up key at niche, unlock Box C to obtain cutting tool. Key is reusable and box remains permanently unlocked."
+        ],
+        "recovery": [
+          "Key cannot be destroyed; Box C state is server-persisted across visits and backtracking."
+        ],
+        "state": [
+          "key_state",
+          "box_c_unlocked",
+          "cutting_tool_state"
+        ],
+        "open_questions": [
+          "Ensure key does not vanish upon opening Box C."
+        ]
+      },
+      {
+        "id": 10,
+        "name": "False Escape & Backtrack Loop",
+        "bounds": {
+          "x": [
+            0,
+            50
+          ],
+          "y": [
+            0,
+            20
+          ]
+        },
+        "geometry": [
+          {
+            "id": "main_floor",
+            "type": "platform",
+            "rect": [
+              0,
+              2,
+              50,
+              3
+            ],
+            "mandatory": true,
+            "description": "Floor at Y=3."
+          },
+          {
+            "id": "entry_door",
+            "type": "door",
+            "rect": [
+              0,
+              3,
+              2,
+              6
+            ],
+            "mandatory": true,
+            "description": "Ground floor entry door from Room 9 (also acts as return_door)."
+          },
+          {
+            "id": "safe_zone",
+            "type": "safe_zone",
+            "rect": [
+              2,
+              3,
+              6,
+              5
+            ],
+            "mandatory": true,
+            "description": "Safe arrival staging zone."
+          },
+          {
+            "id": "step_a",
+            "type": "platform",
+            "rect": [
+              6,
+              3,
+              9,
+              4
+            ],
+            "mandatory": true,
+            "description": "First intermediate step with surface at Y=4 (deltaY = 32 px from floor)."
+          },
+          {
+            "id": "platform_a",
+            "type": "platform",
+            "rect": [
+              11,
+              5,
+              18,
+              6
+            ],
+            "mandatory": true,
+            "description": "First elevated platform with surface at Y=6 (deltaY = 64 px from step_a)."
+          },
+          {
+            "id": "step_b",
+            "type": "platform",
+            "rect": [
+              20,
+              7,
+              23,
+              8
+            ],
+            "mandatory": true,
+            "description": "Second intermediate step with surface at Y=8 (deltaY = 64 px from platform_a)."
+          },
+          {
+            "id": "platform_b",
+            "type": "platform",
+            "rect": [
+              25,
+              9,
+              32,
+              10
+            ],
+            "mandatory": true,
+            "description": "Second elevated platform with surface at Y=10 (deltaY = 64 px from step_b)."
+          },
+          {
+            "id": "step_c",
+            "type": "platform",
+            "rect": [
+              34,
+              11,
+              37,
+              12
+            ],
+            "mandatory": true,
+            "description": "Third intermediate step with surface at Y=12 (deltaY = 64 px from platform_b)."
+          },
+          {
+            "id": "platform_c",
+            "type": "platform",
+            "rect": [
+              26,
+              13,
+              44,
+              14
+            ],
+            "mandatory": true,
+            "description": "Top scaffold platform holding the sealed hatch (surface Y=14, deltaY = 64 px from step_c)."
+          },
+          {
+            "id": "emergency_ladder",
+            "type": "climbable",
+            "rect": [
+              28,
+              3,
+              29,
+              14
+            ],
+            "mandatory": true,
+            "description": "Emergency ladder deployed once platform C is reached, connecting floor Y=3 directly to Y=14."
+          },
+          {
+            "id": "sealed_hatch",
+            "type": "hatch",
+            "rect": [
+              38,
+              14,
+              41,
+              17
+            ],
+            "mandatory": true,
+            "description": "Final escape hatch reinforced with steel bars on Platform C."
+          },
+          {
+            "id": "cut_interaction",
+            "type": "interaction_zone",
+            "rect": [
+              36,
+              14,
+              42,
+              16
+            ],
+            "mandatory": true,
+            "description": "Zone to interact with cutting tool to breach hatch."
+          }
+        ],
+        "transition": {
+          "entry": "Room 10 entry_door [0, 3, 2, 6] (arriving from Room 9)",
+          "backtrack_mapping": "Room 10 entry_door [0, 3, 2, 6] -> Reverse corridor -> Room 9 exit_door [47, 3, 49, 6]",
+          "final_exit": "sealed_hatch [38, 14, 41, 17] -> Surface breach -> Campaign complete"
+        },
+        "items": [],
+        "solution": [
+          "Initial climb: Jump step_a (Y=4) -> platform_a (Y=6) -> step_b (Y=8) -> platform_b (Y=10) -> step_c (Y=12) -> platform_c (Y=14). All deltaY <= 64 px <= 71.5 px.",
+          "Reach Platform C and inspect sealed_hatch at [38, 14, 41, 17]. Discover rebar requiring cutting tool.",
+          "Inspection deploys emergency_ladder at [28, 3, 29, 14], connecting platform_c (Y=14) straight to floor (Y=3).",
+          "Solo carrier drops to floor and backtracks via entry_door [0, 3, 2, 6] to Room 9.",
+          "Retrieve cutting_tool from Box C in Room 9 and return to Room 10.",
+          "Solo carrier climbs emergency_ladder straight from Y=3 to Y=14 without repeating jumps or needing boosts.",
+          "Interact with cut_interaction using cutting_tool to breach hatch and complete campaign."
+        ],
+        "recovery": [
+          "Full-width floor catches missed jumps.",
+          "Emergency ladder remains permanently deployed once triggered, enabling unlimited safe ascents.",
+          "Return door to Room 9 remains unlocked throughout."
+        ],
+        "state": [
+          "false_escape_discovered",
+          "emergency_ladder_deployed",
+          "hatch_cut",
+          "campaign_complete"
+        ],
+        "open_questions": [
+          "Validate cutting animation and victory transition trigger."
+        ]
+      }
+    ],
+    "campaign_graph": {
+      "main_path": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "backtrack_edges": [
+        [
+          10,
+          9
+        ],
+        [
+          9,
+          10
+        ]
+      ],
+      "transition_network": [
+        {
+          "from": 1,
+          "to": 2,
+          "exit": [
+            47,
+            8,
+            49,
+            11
+          ],
+          "entry": [
+            0,
+            3,
+            2,
+            6
+          ],
+          "type": "Airlock 1-2 (Stair descent)",
+          "staging": [
+            2,
+            3,
+            6,
+            5
+          ]
+        },
+        {
+          "from": 2,
+          "to": 3,
+          "exit": [
+            47,
+            9,
+            49,
+            12
+          ],
+          "entry": [
+            0,
+            3,
+            2,
+            6
+          ],
+          "type": "Airlock 2-3 (Stair descent)",
+          "staging": [
+            2,
+            3,
+            6,
+            5
+          ]
+        },
+        {
+          "from": 3,
+          "to": 4,
+          "exit": [
+            47,
+            3,
+            49,
+            6
+          ],
+          "entry": [
+            0,
+            3,
+            2,
+            6
+          ],
+          "type": "Horizontal corridor",
+          "staging": [
+            2,
+            3,
+            6,
+            5
+          ]
+        },
+        {
+          "from": 4,
+          "to": 5,
+          "exit": [
+            47,
+            3,
+            49,
+            6
+          ],
+          "entry": [
+            0,
+            3,
+            2,
+            6
+          ],
+          "type": "Horizontal corridor",
+          "staging": [
+            2,
+            3,
+            6,
+            5
+          ]
+        },
+        {
+          "from": 5,
+          "to": 6,
+          "exit": [
+            47,
+            3,
+            49,
+            6
+          ],
+          "entry": [
+            0,
+            2,
+            2,
+            5
+          ],
+          "type": "Shaft ground entry",
+          "staging": [
+            2,
+            2,
+            5,
+            4
+          ]
+        },
+        {
+          "from": 6,
+          "to": 7,
+          "exit": [
+            23,
+            15,
+            25,
+            18
+          ],
+          "entry": [
+            0,
+            15,
+            2,
+            18
+          ],
+          "type": "Upper catwalk bridge",
+          "staging": [
+            3,
+            3,
+            7,
+            5
+          ]
+        },
+        {
+          "from": 7,
+          "to": 8,
+          "exit": [
+            47,
+            3,
+            49,
+            6
+          ],
+          "entry": [
+            0,
+            3,
+            2,
+            6
+          ],
+          "type": "Horizontal corridor",
+          "staging": [
+            2,
+            3,
+            6,
+            5
+          ]
+        },
+        {
+          "from": 8,
+          "to": 9,
+          "exit": [
+            47,
+            3,
+            49,
+            6
+          ],
+          "entry": [
+            0,
+            3,
+            2,
+            6
+          ],
+          "type": "Horizontal corridor",
+          "staging": [
+            2,
+            3,
+            6,
+            5
+          ]
+        },
+        {
+          "from": 9,
+          "to": 10,
+          "exit": [
+            47,
+            3,
+            49,
+            6
+          ],
+          "entry": [
+            0,
+            3,
+            2,
+            6
+          ],
+          "type": "Forward corridor",
+          "staging": [
+            2,
+            3,
+            6,
+            5
+          ]
+        },
+        {
+          "from": 10,
+          "to": 9,
+          "exit": [
+            0,
+            3,
+            2,
+            6
+          ],
+          "entry": [
+            47,
+            3,
+            49,
+            6
+          ],
+          "type": "Reverse corridor (Backtrack)",
+          "staging": [
+            43,
+            3,
+            47,
+            5
+          ]
+        },
+        {
+          "from": 9,
+          "to": 10,
+          "exit": [
+            47,
+            3,
+            49,
+            6
+          ],
+          "entry": [
+            0,
+            3,
+            2,
+            6
+          ],
+          "type": "Forward corridor (Return with tool)",
+          "staging": [
+            2,
+            3,
+            6,
+            5
+          ]
+        },
+        {
+          "from": 10,
+          "to": "Surface",
+          "exit": [
+            38,
+            14,
+            41,
+            17
+          ],
+          "entry": null,
+          "type": "Hatch Breach Escape",
+          "staging": null
+        }
+      ],
+      "rules": [
+        "Room 10 cannot complete without the cutting tool.",
+        "Cutting tool is guaranteed in Room 9 Box C.",
+        "Room 9 state persists when revisited.",
+        "No mandatory item can be destroyed, consumed accidentally, or lost on disconnect.",
+        "Emergency ladder in Room 10 enables solo carrier re-ascent without teammate boost.",
+        "Independent Room Presence: Room 10 -> Room 9 transition must not move teammates out of Room 10. The 15-second airlock applies to forward progression only. Teammates remaining in Room 10 maintain independent room presence."
+      ]
+    },
+    "test_plan": [
+      {
+        "id": "T01",
+        "name": "Room 1 Boost with 4 Players",
+        "assertion": "Player reaches Y=8 upper ledge using boost; rope lowers; team exits",
+        "in_engine_needed": true
+      },
+      {
+        "id": "T02",
+        "name": "Room 1 Small-Team Scaling",
+        "assertion": "2 and 3 player teams can complete boost/rope sequence",
+        "in_engine_needed": true
+      },
+      {
+        "id": "T03",
+        "name": "1-Carried-Item Invariant",
+        "assertion": "Picking up second item drops currently carried item atomically",
+        "in_engine_needed": true
+      },
+      {
+        "id": "T04",
+        "name": "Disconnect Carrying Critical Item",
+        "assertion": "Item safely drops to floor underneath player; zero cloning or loss",
+        "in_engine_needed": true
+      },
+      {
+        "id": "T05",
+        "name": "15s Airlock Evacuation",
+        "assertion": "Trailing/downed players caught up into safe staging area",
+        "in_engine_needed": true
+      },
+      {
+        "id": "T06",
+        "name": "Room 8 Persistent Unlock",
+        "assertion": "Simultaneous switches trigger permanent door open; reset lever functions",
+        "in_engine_needed": true
+      },
+      {
+        "id": "T07",
+        "name": "Room 9 Key Safety",
+        "assertion": "Key never consumed or destroyed; Box C remains unlocked",
+        "in_engine_needed": true
+      },
+      {
+        "id": "T08",
+        "name": "Room 10 Backtrack Loop",
+        "assertion": "10->9->10 loop permits solo re-climb via emergency ladder and hatch cut",
+        "in_engine_needed": true
+      },
+      {
+        "id": "T09",
+        "name": "Room State Persistence",
+        "assertion": "Visited room objects/switches/boxes maintain state across transitions",
+        "in_engine_needed": true
+      },
+      {
+        "id": "T10",
+        "name": "Guard Capture & Recovery",
+        "assertion": "Captured player in holding nook can be freed; zero transition deadlock",
+        "in_engine_needed": true
+      },
+      {
+        "id": "T11",
+        "name": "Searchlight Occlusion",
+        "assertion": "Solid cover blocks detection server-side",
+        "in_engine_needed": true
+      },
+      {
+        "id": "T12",
+        "name": "Stuck Movable Reset",
+        "assertion": "Crate/chair reset restores valid spawn position",
+        "in_engine_needed": true
+      }
+    ]
+  }
+}

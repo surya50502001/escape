@@ -4,4 +4,6 @@ import './mazeTraversal.test.js';
 import './privateRooms.test.js';
 import './overseer.test.js';
 import './traversalAudit.test.js';
+import './campaignSchema.test.js';
+import './campaignTraversal.test.js';
 
