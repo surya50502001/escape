@@ -187,29 +187,39 @@ describe('Phase 2B — Platform Tunneling Fix Regression', () => {
 
   it('MULTI-01: player crossing two stacked platforms lands on the higher (first) one', () => {
     // Real geometry: dormitory ceiling at Y=200 (isPlatform, x=580..1080) and
-    // dormitory floor at Y=360 (isPlatform, x=580..1080) are both at x=800.
-    // Player at y=195, vy=1500 (50 px/tick): prevY=195, py=245.
-    // Swept check crosses Y=200 first (195 <= 200 && 245 >= 200) → lands on Y=200.
-    // Y=360 is NOT crossed this tick (245 < 360) — but even at higher vy it would
-    // be skipped because bestY picks the minimum (highest on screen = lowest Y value).
-    // The test would fail if the engine returned Y=360 instead of Y=200.
-    const DORM_CEILING_Y = 200; // dormitory ceiling platform in MAZE_WALLS
+    // dormitory floor at DORM_LEDGE_Y=360 (isPlatform, x=580..1080) both span x=800.
+    // Downward movement configured to cross BOTH platform surfaces in a single update tick:
+    //   p.y = 195 (5 px above upper platform Y=200)
+    //   p.vy = 5375 px/s
+    // Physics integration during engine.update():
+    //   p.vy += GRAVITY * DT = 5375 + 750 / 30 = 5400 px/s
+    //   fallingPrevY = 195
+    //   py = 195 + 5400 / 30 = 375 px
+    // Swept crossing checks:
+    //   Upper surface Y=200: 195 <= 200 && 375 >= 200 (TRUE: crossed from above)
+    //   Lower surface Y=360: 195 <= 360 && 375 >= 360 (TRUE: crossed from above)
+    // Both surfaces are within the swept segment [195, 375] in this single tick.
+    // The engine must select the first platform encountered from above (min bestY = 200).
+    // If the engine selected the lower platform (e.g. max bestY = 360), the test would fail.
+    const DORM_CEILING_Y = 200;
     const engine = makeEngine();
     const p = engine.addHumanPlayer('p_multi1', 'Multi1')!;
-    p.x = 800;              // centre of dormitory — over both ceiling (Y=200) and floor (Y=360)
-    p.y = DORM_CEILING_Y - 5; // 5 px above dormitory ceiling
-    p.vy = 1500;            // 50 px/tick — crosses both surfaces in one tick
+    p.x = 800;               // centre of dormitory — horizontally overlaps both Y=200 and Y=360
+    p.y = DORM_CEILING_Y - 5; // 195 — 5 px above dormitory ceiling
+    p.vy = 5375;             // one-tick displacement = 180 px; py reaches 375, crossing Y=200 AND Y=360
     p.vx = 0;
     p.state = 'FALLING';
     p.isGrounded = false;
 
     engine.update();
 
-    assert.equal(p.isGrounded, true);
+    assert.equal(p.isGrounded, true, 'Player must be grounded after crossing platforms');
+    assert.equal(p.state, 'ON_FLOOR', 'Player state must be ON_FLOOR');
     assert.equal(p.y, DORM_CEILING_Y,
       `Must land on first (higher) platform Y=${DORM_CEILING_Y}, not dormitory floor Y=${DORM_LEDGE_Y}`);
     assert.notEqual(p.y, DORM_LEDGE_Y,
       'Must NOT skip past dormitory ceiling and land on dormitory floor');
+    assert.equal(p.vy, 0, 'Vertical velocity must be zeroed on landing');
   });
 
   it('MULTI-02: player falling from above DORM_LEDGE_Y lands on dormitory, not floor', () => {

@@ -303,15 +303,8 @@ describe('Maze Geometry & Traversal', () => {
 
     // 3. Hop up stepping shelves inside maintenance to reach catwalk at Y=460.
     // All movement uses engine inputs — no teleporting between route segments.
-    p.x = 270;
-    p.y = FLOOR_Y;
-    p.isGrounded = true;
-    p.state = 'ON_FLOOR';
-    p.vx = 0;
-    p.vy = 0;
-
     // Walk right to step 1 centre (x=305, platform x=250..360, Y=560).
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 40; i++) {
       engine.handleInput(p.id, input({ right: true }));
       engine.update();
       if (p.x >= 305) break;
@@ -361,7 +354,7 @@ describe('Maze Geometry & Traversal', () => {
     assert.equal(p.y, 460, 'Landed on catwalk');
 
     // 4. Walk right along catwalk toward dormitory entrance at X=560
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 80; i++) {
       engine.handleInput(p.id, input({ right: true }));
       engine.update();
       if (p.x >= 560) break;
@@ -369,7 +362,6 @@ describe('Maze Geometry & Traversal', () => {
     assert.ok(p.x >= 550, `Walked to end of catwalk (x=${p.x})`);
 
     // 5. Drop ladder to connect catwalk (Y=460) to dormitory floor (Y=360)
-    p.x = 560;
     engine.handleInput(p.id, input({ interact: true }));
     assert.equal(p.carryingLadderId, null);
     const ladder = engine.state.ladders.find(l => l.id === 'ladder_maint')!;
