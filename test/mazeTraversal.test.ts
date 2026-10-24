@@ -307,26 +307,29 @@ describe('Maze Geometry & Traversal', () => {
     p.isGrounded = true;
     p.state = 'ON_FLOOR';
 
-    // Jump to step 1 (Y=560)
-    engine.handleInput(p.id, input({ jump: true, right: true }));
+    // Jump to step 1 (Y=560) — step platform at x=250..360, centre x=305.
+    // Jump straight up (no horizontal drift) to stay over the step.
+    p.x = 305;
+    engine.handleInput(p.id, input({ jump: true }));
     for (let i = 0; i < 20; i++) {
       engine.update();
       if (p.state === 'ON_FLOOR' && p.y <= 560) break;
     }
     assert.equal(p.y, 560, 'Landed on step 1');
 
-    // Jump to step 2 (Y=510)
-    p.x = 180;
-    engine.handleInput(p.id, input({ jump: true, left: true }));
-    for (let i = 0; i < 20; i++) {
+    // Jump to step 2 (Y=510) — step platform at x=80..230, centre x=155.
+    p.x = 155;
+    engine.handleInput(p.id, input({ jump: true }));
+    for (let i = 0; i < 25; i++) {
       engine.update();
       if (p.state === 'ON_FLOOR' && p.y <= 510) break;
     }
     assert.equal(p.y, 510, 'Landed on step 2');
 
-    // Jump to catwalk (Y=460)
-    engine.handleInput(p.id, input({ jump: true, right: true }));
-    for (let i = 0; i < 20; i++) {
+    // Jump to catwalk (Y=460) — catwalk at x=80..580, centre x=330.
+    p.x = 330;
+    engine.handleInput(p.id, input({ jump: true }));
+    for (let i = 0; i < 25; i++) {
       engine.update();
       if (p.state === 'ON_FLOOR' && p.y <= 460) break;
     }

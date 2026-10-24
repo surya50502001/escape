@@ -6,4 +6,5 @@ import './overseer.test.js';
 import './traversalAudit.test.js';
 import './campaignSchema.test.js';
 import './campaignTraversal.test.js';
+import './tunnelingFix.test.js';
 

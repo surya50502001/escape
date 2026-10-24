@@ -993,29 +993,29 @@ describe('Phase 2A — Softlock & Safety Matrix', () => {
     }
   });
 
-  it('MATRIX-05: deterministic platform tunneling check — falling player tunnels through platform when displacement exceeds tolerance', () => {
-    // Deterministic reproduction of platform tunneling:
-    // A player falling at ordinary velocity (vy = 450 px/s) starting 2 px above platform (y = 358)
-    // moves by (450 + 25) / 30 = 15.83 px in one tick to y = 373.83.
-    // Because getPlayerLandingY checks py <= surfaceY + 12 (372), the landing check fails (373.83 > 372).
-    // The player tunnels through DORM_LEDGE_Y (360) and remains FALLING.
+  it('MATRIX-05: swept crossing check eliminates platform tunneling — player lands correctly at high velocity', () => {
+    // Verifies the Phase 2B fix: getPlayerLandingY() now uses prevY <= surfaceY < py.
+    // A player falling at vy=450 px/s starting 2 px above DORM_LEDGE_Y (358 px):
+    //   prevY = 358, after tick: py = 358 + (450+25)/30 = 358 + 15.83 = 373.83
+    //   Old check: py (373.83) > surfaceY+12 (372) — MISSED (tunneled through).
+    //   New check: prevY (358) <= surfaceY (360) && py (373.83) >= surfaceY — CAUGHT.
     const engine = makeEngine();
-    const p = engine.addHumanPlayer('p_tunnel_repro', 'TunnelRepro')!;
-    p.x = 700; // Directly over dormitory ledge (DORM_LEDGE_Y = 360, x=580..1080)
-    p.y = DORM_LEDGE_Y - 2; // y = 358
-    p.vy = 450; // Ordinary downward velocity
+    const p = engine.addHumanPlayer('p_matrix05', 'Matrix05')!;
+    p.x = (DORM_LEFT_X + DORM_RIGHT_X) / 2;
+    p.y = DORM_LEDGE_Y - 2; // 2 px above surface
+    p.vy = 450; // tick displacement = (450+25)/30 ≈ 15.8 px — crosses surface
     p.vx = 0;
     p.state = 'FALLING';
     p.isGrounded = false;
 
     engine.update();
 
-    // Verify reproducible tunneling: player crosses platform Y=360 without landing
-    assert.ok(p.y > DORM_LEDGE_Y + 12, `Player position (${p.y}) must have bypassed detection window (<= ${DORM_LEDGE_Y + 12})`);
-    assert.equal(p.state, 'FALLING', 'Player must still be FALLING due to tunneling bug');
-    assert.equal(p.isGrounded, false, 'Player must NOT be grounded');
+    // Fix verified: player lands on platform
+    assert.equal(p.isGrounded, true, 'MATRIX-05 FIXED: player must land on platform (swept check catches crossing)');
+    assert.equal(p.y, DORM_LEDGE_Y, 'Player must be snapped to platform surface');
+    assert.equal(p.state, 'ON_FLOOR');
+    assert.equal(p.vy, 0);
   });
-
   it('MATRIX-06: Room 6 Markdown bounds consistency matches JSON [0, 25]', () => {
     const md = readFileSync('the_pit_level_spec_v1.md', 'utf8');
     assert.match(md, /### Room 6[—\s\-]+Vertical Shaft[\s\S]*?\*\*Bounds:\*\*\s*X 0[–-]25,\s*Y 0[–-]20/,

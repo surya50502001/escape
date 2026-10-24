@@ -110,9 +110,19 @@ function getNearestFloorY(px: number, py: number): number {
   return FLOOR_Y;
 }
 
-/** Check if player is standing on any maze platform surface */
+/**
+ * Check if a downward-moving player crosses a platform surface this tick.
+ *
+ * Uses a swept vertical-segment test: the player's feet travel from prevY to py
+ * in one tick. A surface at surfaceY is crossed when prevY <= surfaceY < py
+ * (player was above or on the surface before integration and is now below it).
+ * This eliminates the fixed ±12 px window that caused tunneling at high velocity.
+ *
+ * The horizontal footprint check uses a 12 px radius so that players whose
+ * centre is slightly outside the platform edge still land cleanly.
+ */
 function getPlayerLandingY(
-  px: number, py: number, vy: number,
+  px: number, py: number, prevY: number, vy: number,
   walls: WallRect[], obstacles: Obstacle[], ladders: Ladder[]
 ): number | null {
   if (vy <= 0) return null; // Only land when falling down
@@ -124,9 +134,9 @@ function getPlayerLandingY(
   for (const w of walls) {
     if (!w.isPlatform) continue;
     const surfaceY = w.y;
-    // Player center is 15px above feet, check if px is over platform
     if (px >= w.x - playerRadius && px <= w.x + w.width + playerRadius) {
-      if (py <= surfaceY + 12 && py >= surfaceY - 60) {
+      // Crossed: was at or above surface before tick, now at or below it
+      if (prevY <= surfaceY && py >= surfaceY) {
         if (bestY === null || surfaceY < bestY) {
           bestY = surfaceY;
         }
@@ -138,7 +148,7 @@ function getPlayerLandingY(
   for (const obs of obstacles) {
     if (obs.type === 'PLATFORM') {
       if (px >= obs.x - playerRadius && px <= obs.x + obs.width + playerRadius) {
-        if (py <= obs.y + 12 && py >= obs.y - 60) {
+        if (prevY <= obs.y && py >= obs.y) {
           if (bestY === null || obs.y < bestY) {
             bestY = obs.y;
           }
@@ -152,7 +162,7 @@ function getPlayerLandingY(
     if (ladder.state !== 'PLACED' || !ladder.isPlaced) continue;
     const lTop = ladder.y;
     if (px >= ladder.x - 16 && px <= ladder.x + ladder.width + 16) {
-      if (py <= lTop + 12 && py >= lTop - 40) {
+      if (prevY <= lTop && py >= lTop) {
         if (bestY === null || lTop < bestY) {
           bestY = lTop;
         }
@@ -1524,8 +1534,9 @@ export class GameEngine {
         // Corpses in mid-air experience gravity until landing on floor or platform
         if (!p.isGrounded) {
           p.vy += GRAVITY * DT;
+          const deadPrevY = p.y;
           p.y += p.vy * DT;
-          const landingY = getPlayerLandingY(p.x, p.y, p.vy, MAZE_WALLS, this.state.obstacles, this.state.ladders);
+          const landingY = getPlayerLandingY(p.x, p.y, deadPrevY, p.vy, MAZE_WALLS, this.state.obstacles, this.state.ladders);
           if (landingY !== null && p.vy > 0) {
             p.y = landingY;
             p.vy = 0;
@@ -1598,10 +1609,11 @@ export class GameEngine {
       if (p.state === 'FALLING') {
         p.vy += GRAVITY * DT;
         p.x += p.vx * DT;
+        const fallingPrevY = p.y;
         p.y += p.vy * DT;
 
         // Check landing on maze platforms/walls
-        const landingY = getPlayerLandingY(p.x, p.y, p.vy, MAZE_WALLS, this.state.obstacles, this.state.ladders);
+        const landingY = getPlayerLandingY(p.x, p.y, fallingPrevY, p.vy, MAZE_WALLS, this.state.obstacles, this.state.ladders);
         if (landingY !== null && p.vy > 0) {
           p.y = landingY;
           p.vy = 0;
