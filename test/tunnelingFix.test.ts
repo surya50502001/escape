@@ -186,15 +186,19 @@ describe('Phase 2B — Platform Tunneling Fix Regression', () => {
   // ─── 4. Multiple platforms — lands on first surface crossed ─────────────
 
   it('MULTI-01: player crossing two stacked platforms lands on the higher (first) one', () => {
-    // MAINT_UPPER_LEDGE_Y = 460, DORM_LEDGE_Y = 360.
-    // Player starts between them (y=400) falling fast enough to cross both in one tick.
-    // Should land on MAINT_UPPER_LEDGE_Y (460) — the first surface crossed from above.
+    // Real geometry: dormitory ceiling at Y=200 (isPlatform, x=580..1080) and
+    // dormitory floor at Y=360 (isPlatform, x=580..1080) are both at x=800.
+    // Player at y=195, vy=1500 (50 px/tick): prevY=195, py=245.
+    // Swept check crosses Y=200 first (195 <= 200 && 245 >= 200) → lands on Y=200.
+    // Y=360 is NOT crossed this tick (245 < 360) — but even at higher vy it would
+    // be skipped because bestY picks the minimum (highest on screen = lowest Y value).
+    // The test would fail if the engine returned Y=360 instead of Y=200.
+    const DORM_CEILING_Y = 200; // dormitory ceiling platform in MAZE_WALLS
     const engine = makeEngine();
     const p = engine.addHumanPlayer('p_multi1', 'Multi1')!;
-    // Use a position that is over MAINT_UPPER_LEDGE but not over DORM_LEDGE
-    p.x = MAINT_UPPER_LEDGE_X + 50; // within maintenance ledge X range
-    p.y = MAINT_UPPER_LEDGE_Y - 5;  // 5 px above maintenance ledge
-    p.vy = 1500;                     // 50 px/tick — crosses both surfaces
+    p.x = 800;              // centre of dormitory — over both ceiling (Y=200) and floor (Y=360)
+    p.y = DORM_CEILING_Y - 5; // 5 px above dormitory ceiling
+    p.vy = 1500;            // 50 px/tick — crosses both surfaces in one tick
     p.vx = 0;
     p.state = 'FALLING';
     p.isGrounded = false;
@@ -202,7 +206,10 @@ describe('Phase 2B — Platform Tunneling Fix Regression', () => {
     engine.update();
 
     assert.equal(p.isGrounded, true);
-    assert.equal(p.y, MAINT_UPPER_LEDGE_Y, 'Must land on first (higher) platform crossed');
+    assert.equal(p.y, DORM_CEILING_Y,
+      `Must land on first (higher) platform Y=${DORM_CEILING_Y}, not dormitory floor Y=${DORM_LEDGE_Y}`);
+    assert.notEqual(p.y, DORM_LEDGE_Y,
+      'Must NOT skip past dormitory ceiling and land on dormitory floor');
   });
 
   it('MULTI-02: player falling from above DORM_LEDGE_Y lands on dormitory, not floor', () => {

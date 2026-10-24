@@ -301,33 +301,58 @@ describe('Maze Geometry & Traversal', () => {
     assert.equal(picked, true);
     assert.equal(p.carryingLadderId, 'ladder_maint');
 
-    // 3. Hop up stepping shelves inside maintenance to reach catwalk at Y=460
+    // 3. Hop up stepping shelves inside maintenance to reach catwalk at Y=460.
+    // All movement uses engine inputs — no teleporting between route segments.
     p.x = 270;
     p.y = FLOOR_Y;
     p.isGrounded = true;
     p.state = 'ON_FLOOR';
+    p.vx = 0;
+    p.vy = 0;
 
-    // Jump to step 1 (Y=560) — step platform at x=250..360, centre x=305.
-    // Jump straight up (no horizontal drift) to stay over the step.
-    p.x = 305;
+    // Walk right to step 1 centre (x=305, platform x=250..360, Y=560).
+    for (let i = 0; i < 30; i++) {
+      engine.handleInput(p.id, input({ right: true }));
+      engine.update();
+      if (p.x >= 305) break;
+    }
+    assert.ok(p.x >= 290 && p.x <= 360, `Walked to step 1 footprint (x=${p.x})`);
+
+    // Jump straight up onto step 1 (no horizontal input to avoid drift off footprint).
     engine.handleInput(p.id, input({ jump: true }));
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 25; i++) {
       engine.update();
       if (p.state === 'ON_FLOOR' && p.y <= 560) break;
     }
     assert.equal(p.y, 560, 'Landed on step 1');
 
-    // Jump to step 2 (Y=510) — step platform at x=80..230, centre x=155.
-    p.x = 155;
-    engine.handleInput(p.id, input({ jump: true }));
-    for (let i = 0; i < 25; i++) {
+    // Walk left to step 1 left edge (x=250), then jump leftward to step 2
+    // (platform x=80..230, Y=510 — 50 px higher than step 1 Y=560).
+    // Normal jump apex = 77 px > 50 px delta, so the arc clears step 2.
+    for (let i = 0; i < 20; i++) {
+      engine.handleInput(p.id, input({ left: true }));
+      engine.update();
+      if (p.x <= 262) break;
+    }
+    assert.ok(p.x <= 275, `Walked left to step 1 left edge (x=${p.x})`);
+
+    // Jump leftward: the arc carries the player left and up, landing on step 2.
+    engine.handleInput(p.id, input({ jump: true, left: true }));
+    for (let i = 0; i < 30; i++) {
+      engine.handleInput(p.id, input({ left: true }));
       engine.update();
       if (p.state === 'ON_FLOOR' && p.y <= 510) break;
     }
     assert.equal(p.y, 510, 'Landed on step 2');
 
-    // Jump to catwalk (Y=460) — catwalk at x=80..580, centre x=330.
-    p.x = 330;
+    // Walk right along step 2 to centre (x≈155), then jump to catwalk (Y=460, x=80..580).
+    for (let i = 0; i < 20; i++) {
+      engine.handleInput(p.id, input({ right: true }));
+      engine.update();
+      if (p.x >= 155) break;
+    }
+    assert.ok(p.x >= 80 && p.x <= 230, `Walked to step 2 centre (x=${p.x})`);
+
     engine.handleInput(p.id, input({ jump: true }));
     for (let i = 0; i < 25; i++) {
       engine.update();
