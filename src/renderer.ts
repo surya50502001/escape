@@ -8,6 +8,7 @@ import {
   SHAFT_LEFT_X, SHAFT_RIGHT_X, BASEMENT_ENTRY_X,
   MAZE_WALLS, WallRect
 } from '../server/types.js';
+import { ClientCampaignSync } from '../server/campaign/campaignSession.js';
 
 interface Particle {
   x: number;
@@ -798,21 +799,33 @@ export class GameRenderer {
           ctx.arc(endAimX, endAimY, 5, 0, Math.PI * 2);
           ctx.stroke();
 
-          // Overhead HUD hint for local player
-          ctx.fillStyle = '#fde047';
-          ctx.font = 'bold 10px monospace';
+          // Overhead HUD hint for local player (offset cleanly above name tag)
           ctx.textAlign = 'center';
-          ctx.fillText('AIM: MOUSE | CLICK: THROW | [E] DROP', holder.x, holder.y - 44);
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+          ctx.fillRect(holder.x - 110, holder.y - 66, 220, 16);
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(holder.x - 110, holder.y - 66, 220, 16);
+          ctx.fillStyle = '#fde047';
+          ctx.font = 'bold 9px monospace';
+          ctx.fillText('AIM: MOUSE | CLICK: THROW | [E] DROP', holder.x, holder.y - 54);
         } else if (holder.id === localPlayerId) {
-          ctx.fillStyle = '#94a3b8';
-          ctx.font = 'bold 10px monospace';
           ctx.textAlign = 'center';
-          ctx.fillText('[E] DROP ROPE', holder.x, holder.y - 44);
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+          ctx.fillRect(holder.x - 55, holder.y - 66, 110, 16);
+          ctx.strokeStyle = '#64748b';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(holder.x - 55, holder.y - 66, 110, 16);
+          ctx.fillStyle = '#cbd5e1';
+          ctx.font = 'bold 9px monospace';
+          ctx.fillText('[E] DROP ROPE', holder.x, holder.y - 54);
         } else {
-          ctx.fillStyle = '#fde047';
-          ctx.font = 'bold 10px monospace';
           ctx.textAlign = 'center';
-          ctx.fillText('HOLDING ROPE', holder.x, holder.y - 44);
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+          ctx.fillRect(holder.x - 50, holder.y - 66, 100, 16);
+          ctx.fillStyle = '#fde047';
+          ctx.font = 'bold 9px monospace';
+          ctx.fillText('HOLDING ROPE', holder.x, holder.y - 54);
         }
       }
 
@@ -1451,56 +1464,84 @@ export class GameRenderer {
     ctx.font = 'bold 13px monospace';
     ctx.fillText(state.announcementText, marqueeX + marqueeW / 2, 71);
 
-    // 10-Minute Clock & Remaining Prisoners (Top Left, placed right under announcement bar at X=185)
+    // Top-Left Status Card (Clock & Prisoner Counts)
+    const leftCardX = 180;
+    const leftCardY = 92;
+    const leftCardW = 280;
+    const leftCardH = 50;
+    ctx.fillStyle = 'rgba(11, 15, 25, 0.90)';
+    ctx.fillRect(leftCardX, leftCardY, leftCardW, leftCardH);
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(leftCardX, leftCardY, leftCardW, leftCardH);
+
     ctx.textAlign = 'left';
     if (state.phase === 'LOBBY') {
       ctx.fillStyle = '#38bdf8';
-      ctx.font = 'bold 18px monospace';
-      ctx.fillText(`LOBBY: ${state.players.length}/${state.maxPlayers || 10} PRISONERS`, 185, 115);
+      ctx.font = 'bold 15px monospace';
+      ctx.fillText(`LOBBY: ${state.players.length}/${state.maxPlayers || 10} PRISONERS`, leftCardX + 12, leftCardY + 22);
 
       const playerNames = state.players.map(p => p.name).join(', ');
       ctx.fillStyle = '#94a3b8';
       ctx.font = '11px monospace';
-      ctx.fillText(`CONNECTED: ${playerNames || 'None'}`, 185, 134);
-
-      if (state.lobbyCountdown > 0) {
-        ctx.textAlign = 'right';
-        ctx.fillStyle = '#22c55e';
-        ctx.font = 'bold 15px monospace';
-        ctx.fillText(`STARTING IN: ${state.lobbyCountdown}s`, this.width - 45, 115);
-      }
+      ctx.fillText(`CONNECTED: ${playerNames || 'None'}`, leftCardX + 12, leftCardY + 39);
     } else {
       ctx.fillStyle = state.phase === 'PURGE' ? '#ef4444' : (state.matchTimer < 120 ? '#ef4444' : '#f8fafc');
-      ctx.font = 'bold 20px monospace';
+      ctx.font = 'bold 18px monospace';
       const clockPrefix = state.phase === 'PURGE' ? '💀 PURGE: ' : '⏱️ ';
-      ctx.fillText(`${clockPrefix}${timeFormatted}`, 185, 115);
+      ctx.fillText(`${clockPrefix}${timeFormatted}`, leftCardX + 12, leftCardY + 22);
 
       const livingInPit = state.players.filter(p => !p.hasEscaped && p.state !== 'DEAD').length;
       ctx.fillStyle = '#38bdf8';
-      ctx.font = '12px monospace';
-      ctx.fillText(`PRISONERS TRAPPED: ${livingInPit}`, 185, 134);
+      ctx.font = '11px monospace';
+      ctx.fillText(`PRISONERS TRAPPED: ${livingInPit}`, leftCardX + 12, leftCardY + 39);
     }
 
-    // Local Player Status (Top Right)
+    // Top-Right Player Card (Equipment & Game State)
+    const rightCardW = 240;
+    const rightCardX = this.width - rightCardW - 40;
+    const rightCardY = 92;
+    const rightCardH = 50;
+    ctx.fillStyle = 'rgba(11, 15, 25, 0.90)';
+    ctx.fillRect(rightCardX, rightCardY, rightCardW, rightCardH);
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(rightCardX, rightCardY, rightCardW, rightCardH);
+
     ctx.textAlign = 'right';
+    const textRightX = rightCardX + rightCardW - 14;
+
     if (localPlayer) {
       if (localPlayer.hasEscaped) {
         ctx.fillStyle = '#22c55e';
-        ctx.font = 'bold 15px sans-serif';
-        ctx.fillText(`🏆 YOU ESCAPED AT ${localPlayer.escapeTime || '0:00'}!`, this.width - 45, 115);
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillText(`🏆 YOU ESCAPED AT ${localPlayer.escapeTime || '0:00'}!`, textRightX, rightCardY + 28);
       } else if (localPlayer.state === 'DEAD') {
         ctx.fillStyle = '#ef4444';
-        ctx.font = 'bold 15px sans-serif';
-        ctx.fillText(`💀 YOU PERISHED`, this.width - 45, 115);
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillText(`💀 YOU PERISHED`, textRightX, rightCardY + 28);
       } else {
-        ctx.fillStyle = '#22d3ee';
-        ctx.font = 'bold 13px monospace';
         const hasRope = state.rope.heldByPlayerId === localPlayer.id;
         const statusText = hasRope ? 'ROPE READY' : (localPlayer.rocks > 0 ? '🪨 ROCK' : 'BARE HANDS');
-        ctx.fillText(`EQUIPPED: ${statusText}`, this.width - 45, 115);
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = '11px monospace';
-        ctx.fillText(`SABOTAGES: ${localPlayer.sabotages}`, this.width - 45, 134);
+
+        if (state.phase === 'LOBBY' && state.lobbyCountdown > 0) {
+          ctx.fillStyle = '#22c55e';
+          ctx.font = 'bold 13px monospace';
+          ctx.fillText(`STARTING IN: ${state.lobbyCountdown}s`, textRightX, rightCardY + 20);
+
+          ctx.fillStyle = '#22d3ee';
+          ctx.font = 'bold 11px monospace';
+          ctx.fillText(`EQUIPPED: ${statusText}`, textRightX, rightCardY + 38);
+        } else {
+          ctx.fillStyle = '#22d3ee';
+          ctx.font = 'bold 13px monospace';
+          ctx.fillText(`EQUIPPED: ${statusText}`, textRightX, rightCardY + 20);
+
+          ctx.fillStyle = '#94a3b8';
+          ctx.font = '11px monospace';
+          const subText = state.phase === 'LOBBY' ? 'READY IN LOBBY' : `SABOTAGES: ${localPlayer.sabotages}`;
+          ctx.fillText(subText, textRightX, rightCardY + 38);
+        }
       }
     }
 
@@ -1551,5 +1592,575 @@ export class GameRenderer {
       ctx.font = '13px monospace';
       ctx.fillText(`• ${p.name} - Purged in cell`, 550, 250 + idx * 24);
     });
+  }
+
+  // =========================================================================
+  // 10-ROOM AUTHORITATIVE COOPERATIVE CAMPAIGN RENDERER
+  // =========================================================================
+  public renderCampaign(campaign: ClientCampaignSync, localPlayerId: string): void {
+    const now = performance.now();
+    const dt = (now - this.lastTime) / 1000;
+    this.lastTime = now;
+
+    const ctx = this.ctx;
+    const roomW = campaign.roomWidth || 1600;
+    const roomH = campaign.roomHeight || 640;
+
+    // 1. Camera Tracking
+    const localPlayer = campaign.players.find(p => p.id === localPlayerId);
+    if (localPlayer) {
+      this.targetCameraX = localPlayer.x - this.width / 2;
+      this.targetCameraY = localPlayer.y - this.height * 0.55;
+    } else {
+      this.targetCameraX = 0;
+      this.targetCameraY = Math.max(0, roomH - this.height);
+    }
+
+    const maxCamX = Math.max(0, roomW - this.width);
+    const maxCamY = Math.max(0, roomH - this.height);
+    this.targetCameraX = Math.max(0, Math.min(maxCamX, this.targetCameraX));
+    this.targetCameraY = Math.max(0, Math.min(maxCamY, this.targetCameraY));
+
+    // Smooth lerp
+    this.cameraX += (this.targetCameraX - this.cameraX) * 0.1;
+    this.cameraY += (this.targetCameraY - this.cameraY) * 0.1;
+    this.cameraX = Math.max(0, Math.min(maxCamX, this.cameraX));
+    this.cameraY = Math.max(0, Math.min(maxCamY, this.cameraY));
+
+    // Clear canvas
+    ctx.fillStyle = '#06070a';
+    ctx.fillRect(0, 0, this.width, this.height);
+
+    // ── WORLD TRANSFORM ─────────────────────────────────────────
+    ctx.save();
+    ctx.translate(-Math.round(this.cameraX), -Math.round(this.cameraY));
+
+    // A. Room Background Paneling
+    ctx.fillStyle = '#080c14';
+    ctx.fillRect(0, 0, roomW, roomH);
+
+    // Grid Seams
+    ctx.strokeStyle = '#101726';
+    ctx.lineWidth = 1;
+    for (let x = 0; x <= roomW; x += 64) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, roomH); ctx.stroke();
+    }
+    for (let y = 0; y <= roomH; y += 64) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(roomW, y); ctx.stroke();
+    }
+
+    // B. Safe Arrival Zones
+    for (const sz of campaign.safeZones) {
+      ctx.fillStyle = 'rgba(16, 185, 129, 0.12)';
+      ctx.fillRect(sz.rect.x, sz.rect.y, sz.rect.width, sz.rect.height);
+      ctx.strokeStyle = 'rgba(16, 185, 129, 0.4)';
+      ctx.setLineDash([4, 4]);
+      ctx.strokeRect(sz.rect.x, sz.rect.y, sz.rect.width, sz.rect.height);
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = 'rgba(16, 185, 129, 0.8)';
+      ctx.font = 'bold 9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('SAFE ARRIVAL ZONE', sz.rect.x + sz.rect.width / 2, sz.rect.y + 14);
+    }
+
+    // C. Platforms and Solid Walls
+    for (const w of campaign.walls) {
+      if (w.isPlatform) {
+        // High-tech platform
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(w.x, w.y, w.width, w.height);
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(w.x, w.y, w.width, 3);
+
+        // Yellow edge safety caps
+        const capW = Math.min(12, w.width / 2);
+        ctx.fillStyle = '#f59e0b';
+        ctx.fillRect(w.x, w.y + 3, capW, Math.max(0, w.height - 3));
+        ctx.fillRect(w.x + w.width - capW, w.y + 3, capW, Math.max(0, w.height - 3));
+      } else {
+        // Reinforced solid wall
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(w.x, w.y, w.width, w.height);
+        ctx.strokeStyle = '#334155';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(w.x + 0.5, w.y + 0.5, w.width - 1, w.height - 1);
+
+        // Steel rivets
+        ctx.fillStyle = '#475569';
+        for (let rx = w.x + 8; rx < w.x + w.width; rx += 32) {
+          ctx.beginPath(); ctx.arc(rx, w.y + 4, 1.5, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+    }
+
+    // D. Doors & Airlocks
+    for (const door of campaign.doors) {
+      const isExit = door.id.includes('exit') || door.id.includes('hatch');
+      let isUnlocked = true;
+
+      if (campaign.roomId === 8 && door.id === 'exit_door') {
+        isUnlocked = campaign.puzzleState.deployedMechanisms.includes('door_unlocked');
+      } else if (campaign.roomId === 10 && (door.id === 'sealed_hatch' || door.targetRoomId === 'Surface')) {
+        isUnlocked = campaign.puzzleState.cutHatches.includes('sealed_hatch');
+      }
+
+      if (isExit) {
+        if (isUnlocked) {
+          ctx.fillStyle = 'rgba(16, 185, 129, 0.2)';
+          ctx.fillRect(door.rect.x, door.rect.y, door.rect.width, door.rect.height);
+          ctx.strokeStyle = '#22c55e';
+          ctx.lineWidth = 2.5;
+          ctx.strokeRect(door.rect.x, door.rect.y, door.rect.width, door.rect.height);
+
+          ctx.fillStyle = '#4ade80';
+          ctx.font = 'bold 11px monospace';
+          ctx.textAlign = 'center';
+          const exitText = door.targetRoomId === 'Surface' ? 'SURFACE EXIT' : `DOOR → R${door.targetRoomId || ''}`;
+          ctx.fillText(exitText, door.rect.x + door.rect.width / 2, door.rect.y - 8);
+        } else {
+          ctx.fillStyle = 'rgba(239, 68, 68, 0.2)';
+          ctx.fillRect(door.rect.x, door.rect.y, door.rect.width, door.rect.height);
+          ctx.strokeStyle = '#ef4444';
+          ctx.lineWidth = 2.5;
+          ctx.strokeRect(door.rect.x, door.rect.y, door.rect.width, door.rect.height);
+
+          ctx.fillStyle = '#f87171';
+          ctx.font = 'bold 11px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('🔒 LOCKED', door.rect.x + door.rect.width / 2, door.rect.y - 8);
+        }
+      } else {
+        // Entry door / return door
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.15)';
+        ctx.fillRect(door.rect.x, door.rect.y, door.rect.width, door.rect.height);
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(door.rect.x, door.rect.y, door.rect.width, door.rect.height);
+
+        ctx.fillStyle = '#7dd3fc';
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        const label = campaign.roomId === 10 ? '← BACKTRACK R9' : 'ENTRY AIRLOCK';
+        ctx.fillText(label, door.rect.x + door.rect.width / 2, door.rect.y - 6);
+      }
+    }
+
+    // E. Ladders & Climbables
+    for (const ladder of campaign.ladders) {
+      if (!ladder.isPlaced) continue;
+
+      if (ladder.id === 'cell_rope') {
+        // Deployed climbable rope
+        ctx.strokeStyle = '#ca8a04';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(ladder.x, ladder.y);
+        ctx.lineTo(ladder.x, ladder.y + ladder.height);
+        ctx.stroke();
+
+        // Knots
+        ctx.fillStyle = '#eab308';
+        for (let ky = ladder.y + 16; ky < ladder.y + ladder.height; ky += 24) {
+          ctx.beginPath(); ctx.arc(ladder.x, ky, 3.5, 0, Math.PI * 2); ctx.fill();
+        }
+
+        // Anchor bolt at top
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(ladder.x - 6, ladder.y - 4, 12, 8);
+      } else {
+        // Industrial ladder
+        const railX1 = ladder.x - ladder.width / 2;
+        const railX2 = ladder.x + ladder.width / 2;
+        const isEmergency = ladder.id === 'emergency_ladder';
+
+        ctx.strokeStyle = isEmergency ? '#eab308' : '#64748b';
+        ctx.lineWidth = 3;
+
+        // Side rails
+        ctx.beginPath();
+        ctx.moveTo(railX1, ladder.y); ctx.lineTo(railX1, ladder.y + ladder.height);
+        ctx.moveTo(railX2, ladder.y); ctx.lineTo(railX2, ladder.y + ladder.height);
+        ctx.stroke();
+
+        // Rungs
+        ctx.strokeStyle = isEmergency ? '#fde047' : '#94a3b8';
+        ctx.lineWidth = 2;
+        for (let ry = ladder.y + 12; ry < ladder.y + ladder.height; ry += 16) {
+          ctx.beginPath();
+          ctx.moveTo(railX1, ry);
+          ctx.lineTo(railX2, ry);
+          ctx.stroke();
+        }
+
+        if (isEmergency) {
+          ctx.fillStyle = '#fde047';
+          ctx.font = 'bold 9px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('EMERGENCY LADDER', ladder.x, ladder.y - 6);
+        }
+      }
+    }
+
+    // F. Room-Specific Dynamic Mechanics
+    // Room 1: Boost Zone & Anchor
+    if (campaign.roomId === 1) {
+      // Boost zone [8, 3, 14, 5] (px: x 256..448, y 480..544)
+      ctx.fillStyle = 'rgba(34, 211, 238, 0.08)';
+      ctx.fillRect(256, 480, 192, 64);
+      ctx.strokeStyle = 'rgba(34, 211, 238, 0.6)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.strokeRect(256, 480, 192, 64);
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = '#22d3ee';
+      ctx.font = 'bold 11px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('▲ CO-OP BOOST ZONE [W / SPACE] ▲', 352, 516);
+
+      // Rope Anchor at [31, 8] (x: 992, y: 384)
+      ctx.fillStyle = '#eab308';
+      ctx.beginPath();
+      ctx.arc(992, 384, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      if (!campaign.puzzleState.deployedMechanisms.includes('rope_anchor')) {
+        ctx.fillStyle = '#fef08a';
+        ctx.font = 'bold 10px monospace';
+        ctx.fillText('⚓ ROPE ANCHOR', 992, 368);
+      }
+    }
+
+    // Room 2: Movable Crate & Reset Lever
+    if (campaign.roomId === 2) {
+      // Reset lever at x=384, y=544
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(380, 524, 8, 20);
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('RESET', 384, 516);
+    }
+
+    // Room 3: Sleeping Guard at x=768, y=544
+    if (campaign.roomId === 3) {
+      // Guard body
+      ctx.fillStyle = '#475569';
+      ctx.fillRect(754, 520, 28, 24);
+      ctx.fillStyle = '#d97706';
+      ctx.beginPath(); ctx.arc(768, 514, 8, 0, Math.PI * 2); ctx.fill();
+
+      // Zzz animation
+      const zOffset = (Date.now() % 2000) / 2000;
+      ctx.fillStyle = 'rgba(56, 189, 248, ' + (1 - zOffset) + ')';
+      ctx.font = 'bold 13px monospace';
+      ctx.fillText('Zzz...', 778 + zOffset * 10, 500 - zOffset * 25);
+    }
+
+    // Room 4: Searchlight Sweep Beam
+    if (campaign.roomId === 4) {
+      const sX = campaign.puzzleState.searchlightX || 160;
+      const grad = ctx.createRadialGradient(sX, 0, 20, sX, 544, 250);
+      grad.addColorStop(0, 'rgba(253, 224, 71, 0.45)');
+      grad.addColorStop(1, 'rgba(253, 224, 71, 0.0)');
+
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(sX - 10, 0);
+      ctx.lineTo(sX + 10, 0);
+      ctx.lineTo(sX + 80, 544);
+      ctx.lineTo(sX - 80, 544);
+      ctx.closePath();
+      ctx.fill();
+
+      // Searchlight source projector at ceiling
+      ctx.fillStyle = '#fde047';
+      ctx.beginPath(); ctx.arc(sX, 10, 12, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Room 5: Secret Panel at x=800..864
+    if (campaign.roomId === 5) {
+      const opened = campaign.puzzleState.deployedMechanisms.includes('movable_panel');
+      ctx.fillStyle = opened ? '#0f172a' : '#334155';
+      ctx.fillRect(800, 480, 64, 64);
+      ctx.strokeStyle = '#64748b';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(800, 480, 64, 64);
+
+      ctx.fillStyle = opened ? '#22c55e' : '#cbd5e1';
+      ctx.font = 'bold 9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(opened ? 'OPEN' : 'PANEL', 832, 516);
+    }
+
+    // Room 7: Guard Patrol at guardX
+    if (campaign.roomId === 7) {
+      const gX = campaign.puzzleState.guardX || 576;
+      // Flashlight cone
+      ctx.fillStyle = 'rgba(251, 191, 36, 0.2)';
+      ctx.beginPath();
+      ctx.moveTo(gX, 524);
+      ctx.lineTo(gX + 100, 500);
+      ctx.lineTo(gX + 100, 548);
+      ctx.closePath();
+      ctx.fill();
+
+      // Guard figure
+      ctx.fillStyle = '#dc2626';
+      ctx.fillRect(gX - 10, 512, 20, 32);
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = 'bold 9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('GUARD', gX, 504);
+    }
+
+    // Room 8: Switch A & Switch B
+    if (campaign.roomId === 8) {
+      const isA = campaign.puzzleState.activatedSwitches.includes('switch_a');
+      const isB = campaign.puzzleState.activatedSwitches.includes('switch_b');
+      const tA = campaign.puzzleState.switchTimers?.switch_a || 0;
+      const tB = campaign.puzzleState.switchTimers?.switch_b || 0;
+
+      // Switch A (x=384, y=544)
+      ctx.fillStyle = isA ? '#16a34a' : '#7f1d1d';
+      ctx.fillRect(372, 512, 24, 32);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 10px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(isA ? `A (${tA}s)` : 'A', 384, 504);
+
+      // Switch B (x=1152, y=544)
+      ctx.fillStyle = isB ? '#16a34a' : '#7f1d1d';
+      ctx.fillRect(1140, 512, 24, 32);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(isB ? `B (${tB}s)` : 'B', 1152, 504);
+    }
+
+    // Room 9: Key Niche & Box C
+    if (campaign.roomId === 9) {
+      // Key Niche Pedestal at x=256, y=544
+      ctx.fillStyle = '#475569';
+      ctx.fillRect(244, 520, 24, 24);
+      ctx.fillStyle = '#f59e0b';
+      ctx.font = '9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('NICHE', 256, 514);
+
+      // Box C at x=1120..1216, y=480..544
+      const unlocked = campaign.puzzleState.unlockedContainers.includes('box_c');
+      ctx.fillStyle = unlocked ? '#1e293b' : '#334155';
+      ctx.fillRect(1120, 480, 96, 64);
+      ctx.strokeStyle = unlocked ? '#22c55e' : '#eab308';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(1120, 480, 96, 64);
+
+      ctx.fillStyle = unlocked ? '#4ade80' : '#fde047';
+      ctx.font = 'bold 10px monospace';
+      ctx.fillText(unlocked ? 'BOX C (UNLOCKED)' : '🔒 BOX C (LOCKED)', 1168, 516);
+    }
+
+    // Room 10: Platform C & Sealed Hatch
+    if (campaign.roomId === 10) {
+      const isCut = campaign.puzzleState.cutHatches.includes('sealed_hatch');
+      // Sealed hatch at x: 1216..1312, y: 96..192
+      if (isCut) {
+        // Glorious Surface Portal
+        const pGrad = ctx.createRadialGradient(1264, 144, 10, 1264, 144, 120);
+        pGrad.addColorStop(0, '#ffffff');
+        pGrad.addColorStop(0.3, '#38bdf8');
+        pGrad.addColorStop(0.7, '#0284c7');
+        pGrad.addColorStop(1, 'transparent');
+        ctx.fillStyle = pGrad;
+        ctx.fillRect(1180, 60, 168, 168);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 13px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('☀️ SURFACE ESCAPE BREACH ☀️', 1264, 80);
+      } else {
+        // Reinforced Hatch with Heavy Rebar
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(1216, 96, 96, 96);
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(1216, 96, 96, 96);
+
+        // Steel rebar grid
+        ctx.strokeStyle = '#94a3b8';
+        ctx.lineWidth = 4;
+        for (let bx = 1232; bx < 1312; bx += 24) {
+          ctx.beginPath(); ctx.moveTo(bx, 96); ctx.lineTo(bx, 192); ctx.stroke();
+        }
+        for (let by = 112; by < 192; by += 24) {
+          ctx.beginPath(); ctx.moveTo(1216, by); ctx.lineTo(1312, by); ctx.stroke();
+        }
+
+        ctx.fillStyle = '#ef4444';
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('REINFORCED STEEL HATCH', 1264, 84);
+      }
+    }
+
+    // G. Ground Items
+    for (const item of campaign.groundItems) {
+      const bob = Math.sin(Date.now() * 0.006) * 3;
+      const iy = item.y - 12 + bob;
+
+      // Glow halo
+      ctx.fillStyle = 'rgba(234, 179, 8, 0.25)';
+      ctx.beginPath(); ctx.arc(item.x, iy, 18, 0, Math.PI * 2); ctx.fill();
+
+      // Icon & Label
+      let icon = '📦';
+      let label = item.type.toUpperCase();
+      if (item.type === 'cutting_tool') { icon = '✂️'; label = 'CUTTING TOOL'; }
+      else if (item.type === 'key') { icon = '🔑'; label = 'BRASS KEY'; }
+      else if (item.type === 'rope') { icon = '🪢'; label = 'ROPE'; }
+
+      ctx.font = '16px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(icon, item.x, iy + 6);
+
+      // Pill label
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+      ctx.fillRect(item.x - 40, iy - 22, 80, 16);
+      ctx.strokeStyle = '#eab308';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(item.x - 40, iy - 22, 80, 16);
+
+      ctx.fillStyle = '#fde047';
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText(label, item.x, iy - 10);
+    }
+
+    // H. Living Human Prisoners
+    for (const p of campaign.players) {
+      if (p.state !== 'DEAD' && !p.hasEscaped) {
+        const isLocal = p.id === localPlayerId;
+        this.drawHumanPrisoner(ctx, p, isLocal);
+
+        // Draw carried item icon floating above head
+        if (isLocal && campaign.carriedItem) {
+          let cIcon = '📦';
+          if (campaign.carriedItem.type === 'cutting_tool') cIcon = '✂️';
+          else if (campaign.carriedItem.type === 'key') cIcon = '🔑';
+          else if (campaign.carriedItem.type === 'rope') cIcon = '🪢';
+
+          ctx.font = '14px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(cIcon, p.x, p.y - 48);
+        }
+      }
+    }
+
+    // Particles
+    this.updateAndDrawParticles(ctx, dt);
+
+    ctx.restore();
+    // ── END WORLD TRANSFORM ─────────────────────────────────────
+
+    // 2. TACTICAL HUD (VIEWPORT SPACE)
+    const ROOM_OBJECTIVES: Record<number, string> = {
+      1: "Boost teammate to upper walkway [W/SPACE], lower rope [E] for team.",
+      2: "Traverse movable crate and stepping platforms to reach upper exit.",
+      3: "Sneak past sleeping guard or climb overhead bypass pipe.",
+      4: "Evade sweeping searchlight by taking shelter behind cover blocks.",
+      5: "Inspect suspicious wall panel [E] to reveal hidden equipment.",
+      6: "Scale the vertical conduit and ladder to the upper catwalk.",
+      7: "Descend ladder and evade patrolling guard to reach ground exit.",
+      8: "Coordinate Switch A & B within 12s to unlock blast door.",
+      9: "Find brass key at niche to unlock Box C and obtain cutting tool.",
+      10: "Climb steps, deploy emergency ladder, backtrack for tool, cut rebar, and ESCAPE!"
+    };
+
+    // Top-Left Chamber Panel
+    ctx.fillStyle = 'rgba(11, 15, 25, 0.88)';
+    ctx.fillRect(16, 14, 460, 64);
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(16, 14, 460, 64);
+
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = 'bold 15px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`ROOM ${campaign.roomId} / 10 — ${campaign.roomName.toUpperCase()}`, 28, 36);
+
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = '11px monospace';
+    ctx.fillText(ROOM_OBJECTIVES[campaign.roomId] || 'Traverse the chamber cooperatively.', 28, 58);
+
+    // Top-Right Inventory & Team Panel
+    ctx.fillStyle = 'rgba(11, 15, 25, 0.88)';
+    ctx.fillRect(this.width - 340, 14, 324, 64);
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(this.width - 340, 14, 324, 64);
+
+    ctx.fillStyle = '#f59e0b';
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'left';
+    let invText = 'Empty (Max 1 Item)';
+    if (campaign.carriedItem) {
+      if (campaign.carriedItem.type === 'cutting_tool') invText = '✂️ Cutting Tool';
+      else if (campaign.carriedItem.type === 'key') invText = '🔑 Brass Key';
+      else if (campaign.carriedItem.type === 'rope') invText = '🪢 Rope';
+    }
+    ctx.fillText(`HELD ITEM: ${invText}`, this.width - 326, 36);
+
+    // Team Roster
+    const rosterStr = campaign.teamRoster.map(m => `${m.name} (R${m.roomId})`).join('  |  ');
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '10px monospace';
+    ctx.fillText(rosterStr || 'Solo Prisoner', this.width - 326, 58);
+
+    // Center-Bottom Interaction Prompt
+    if (campaign.interactionPrompt) {
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.94)';
+      const pW = 380;
+      const pH = 38;
+      const pX = this.width / 2 - pW / 2;
+      const pY = this.height - 52;
+      ctx.fillRect(pX, pY, pW, pH);
+      ctx.strokeStyle = '#22d3ee';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(pX, pY, pW, pH);
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 14px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(campaign.interactionPrompt, this.width / 2, pY + 24);
+    }
+
+    // Surface Escape Celebration Screen
+    if (campaign.puzzleState.campaignComplete || localPlayer?.hasEscaped) {
+      ctx.fillStyle = 'rgba(8, 12, 20, 0.95)';
+      ctx.fillRect(100, 100, this.width - 200, 500);
+      ctx.strokeStyle = '#22c55e';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(100, 100, this.width - 200, 500);
+
+      ctx.fillStyle = '#4ade80';
+      ctx.font = 'bold 28px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('PRISON ESCAPE SUCCESSFUL!', this.width / 2, 180);
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '16px monospace';
+      ctx.fillText('You cut through the reinforced steel rebar and breached the surface!', this.width / 2, 230);
+      ctx.fillText('All 10 chambers conquered.', this.width / 2, 260);
+
+      ctx.fillStyle = '#facc15';
+      ctx.font = 'bold 18px monospace';
+      ctx.fillText('FREEDOM ACHIEVED', this.width / 2, 330);
+
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '12px monospace';
+      ctx.fillText('Thank you for playing The Pit Co-op Campaign.', this.width / 2, 420);
+    }
   }
 }

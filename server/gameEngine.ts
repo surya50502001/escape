@@ -202,12 +202,24 @@ function resolveHorizontalWallCollision(
         rx = wRight + playerHalfW;
       }
     }
-  }
+}
   return rx;
+}
+
+export interface GameEngineConfig {
+  walls?: WallRect[];
+  worldWidth?: number;
+  worldHeight?: number;
+  floorY?: number;
 }
 
 export class GameEngine {
   public state: GameState;
+  public walls: WallRect[];
+  public worldWidth: number;
+  public worldHeight: number;
+  public floorY: number;
+  public isCustomMap: boolean;
   private pendingSoundEvents: SoundEvent[] = [];
   private matchTimer: number = 600; // 10 minutes
   private nextSignalTimer: number = 14;
@@ -216,7 +228,13 @@ export class GameEngine {
   private lobbyTimer: number = 15;
   private ceilingRockTimer: number = 10;
 
-  constructor() {
+  constructor(config?: GameEngineConfig) {
+    this.walls = config?.walls ?? MAZE_WALLS;
+    this.worldWidth = config?.worldWidth ?? WORLD_WIDTH;
+    this.worldHeight = config?.worldHeight ?? WORLD_HEIGHT;
+    this.floorY = config?.floorY ?? FLOOR_Y;
+    this.isCustomMap = Boolean(config);
+
     this.state = {
       phase: 'LOBBY',
       matchTimer: 600,
@@ -232,7 +250,7 @@ export class GameEngine {
       rope: {
         id: 'main_rope',
         x: 450,
-        y: FLOOR_Y,
+        y: this.floorY,
         vx: 0,
         vy: 0,
         state: 'ON_FLOOR',
@@ -243,12 +261,12 @@ export class GameEngine {
         maxDistance: 280
       },
       players: [],
-      obstacles: INITIAL_OBSTACLES.map(o => ({ ...o })),
+      obstacles: this.isCustomMap ? [] : INITIAL_OBSTACLES.map(o => ({ ...o })),
       fallingRocks: [],
       projectiles: [],
       recentShots: [],
       soundEvents: [],
-      ladders: this.createInitialLadders()
+      ladders: this.isCustomMap ? [] : this.createInitialLadders()
     };
   }
 
@@ -658,7 +676,7 @@ export class GameEngine {
       }
     }
     if (!baseValid) {
-      for (const wall of MAZE_WALLS) {
+      for (const wall of this.walls) {
         if (!wall.isPlatform && !wall.solid) continue;
         if (Math.abs(baseY - wall.y) <= 14 &&
             lx >= wall.x - 10 && lx <= wall.x + wall.width + 10) {
@@ -670,11 +688,11 @@ export class GameEngine {
     if (!baseValid) return false;
 
     // 2. Ladder must not be placed inside solid geometry (skip world boundary slabs)
-    for (const wall of MAZE_WALLS) {
+    for (const wall of this.walls) {
       if (!wall.solid) continue;
-      if (wall.width >= WORLD_WIDTH - 10 || wall.height >= WORLD_HEIGHT - 10) continue;
+      if (wall.width >= this.worldWidth - 10 || wall.height >= this.worldHeight - 10) continue;
       if (wall.width <= 30 && wall.x <= 30) continue; // left boundary
-      if (wall.width <= 30 && wall.x >= WORLD_WIDTH - 60) continue; // right boundary
+      if (wall.width <= 30 && wall.x >= this.worldWidth - 60) continue; // right boundary
       if (wall.y >= FLOOR_Y && wall.height >= 30) continue; // main floor slab
       if (wall.y >= LOWER_FLOOR_Y && wall.height >= 30) continue; // basement floor slab
 
@@ -687,7 +705,7 @@ export class GameEngine {
     let reachesDestination = false;
 
     // A) Elevated platform or catwalk above base
-    for (const wall of MAZE_WALLS) {
+    for (const wall of this.walls) {
       if (!wall.isPlatform && !wall.solid) continue;
       if (wall.y < baseY - 30) {
         const topNearWall = Math.abs(topY - wall.y) <= 35;
@@ -769,7 +787,7 @@ export class GameEngine {
       }
 
       // Grab main vertical pipe (now at V_PIPE_X = 1480)
-      if (Math.abs(p.x - V_PIPE_X) < 35 && (input.up || input.right)) {
+      if (!this.isCustomMap && Math.abs(p.x - V_PIPE_X) < 35 && (input.up || input.right)) {
         p.state = 'CLIMBING_V_PIPE';
         p.x = V_PIPE_X;
         p.vx = 0;
@@ -942,7 +960,7 @@ export class GameEngine {
       if (input.right) p.vx = Math.min(120, p.vx + 10);
 
       // Grab vertical pipe in mid-air
-      if (Math.abs(p.x - V_PIPE_X) < 25 && p.y < FLOOR_Y - 20) {
+      if (!this.isCustomMap && Math.abs(p.x - V_PIPE_X) < 25 && p.y < FLOOR_Y - 20) {
         p.state = 'CLIMBING_V_PIPE';
         p.x = V_PIPE_X;
         p.vx = 0;
@@ -1313,7 +1331,7 @@ export class GameEngine {
     const rope = this.state.rope;
     rope.pulling = false;
     if (rope.pullDamageCooldown && rope.pullDamageCooldown > 0) {
-      rope.pullDamageCooldown -= DT;
+      rope.pullDamageCooldown = Math.max(0, rope.pullDamageCooldown - DT);
     }
 
     if (rope.state === 'HELD') {
@@ -1536,7 +1554,7 @@ export class GameEngine {
           p.vy += GRAVITY * DT;
           const deadPrevY = p.y;
           p.y += p.vy * DT;
-          const landingY = getPlayerLandingY(p.x, p.y, deadPrevY, p.vy, MAZE_WALLS, this.state.obstacles, this.state.ladders);
+          const landingY = getPlayerLandingY(p.x, p.y, deadPrevY, p.vy, this.walls, this.state.obstacles, this.state.ladders);
           if (landingY !== null && p.vy > 0) {
             p.y = landingY;
             p.vy = 0;
@@ -1544,14 +1562,14 @@ export class GameEngine {
             p.isGrounded = true;
             this.emitSound({ type: 'FALL_IMPACT', x: p.x, y: p.y });
           } else {
-            const floorY = getNearestFloorY(p.x, p.y);
+            const floorY = this.isCustomMap ? this.floorY : getNearestFloorY(p.x, p.y);
             if (p.y >= floorY && p.vy > 0) {
               p.y = floorY;
               p.vy = 0;
               p.vx = 0;
               p.isGrounded = true;
               this.emitSound({ type: 'FALL_IMPACT', x: p.x, y: p.y });
-            } else if (p.y >= LOWER_FLOOR_Y && p.x >= BASEMENT_ENTRY_X) {
+            } else if (!this.isCustomMap && p.y >= LOWER_FLOOR_Y && p.x >= BASEMENT_ENTRY_X) {
               p.y = LOWER_FLOOR_Y;
               p.vy = 0;
               p.vx = 0;
@@ -1564,11 +1582,11 @@ export class GameEngine {
       }
 
       if (p.stamina < 100 && !p.climbGrabbingId) p.stamina = Math.min(100, p.stamina + 20 * DT);
-      if (p.tackleCooldown > 0) p.tackleCooldown -= DT;
-      if (p.attackCooldown > 0) p.attackCooldown -= DT;
-      if (p.climbAttackCooldown > 0) p.climbAttackCooldown -= DT;
-      if (p.climbKickTimer > 0) p.climbKickTimer -= DT;
-      if (p.hazardCooldown > 0) p.hazardCooldown -= DT;
+      if (p.tackleCooldown > 0) p.tackleCooldown = Math.max(0, p.tackleCooldown - DT);
+      if (p.attackCooldown > 0) p.attackCooldown = Math.max(0, p.attackCooldown - DT);
+      if (p.climbAttackCooldown > 0) p.climbAttackCooldown = Math.max(0, p.climbAttackCooldown - DT);
+      if (p.climbKickTimer > 0) p.climbKickTimer = Math.max(0, p.climbKickTimer - DT);
+      if (p.hazardCooldown > 0) p.hazardCooldown = Math.max(0, p.hazardCooldown - DT);
 
       // Climbing grab maintenance
       if (p.climbGrabbingId) {
@@ -1599,8 +1617,8 @@ export class GameEngine {
       }
 
       if (p.stunnedTimer > 0) {
-        p.stunnedTimer -= DT;
-        if (p.stunnedTimer <= 0 && p.isGrounded) {
+        p.stunnedTimer = Math.max(0, p.stunnedTimer - DT);
+        if (p.stunnedTimer === 0 && p.isGrounded) {
           p.state = 'ON_FLOOR';
         }
       }
@@ -1613,7 +1631,7 @@ export class GameEngine {
         p.y += p.vy * DT;
 
         // Check landing on maze platforms/walls
-        const landingY = getPlayerLandingY(p.x, p.y, fallingPrevY, p.vy, MAZE_WALLS, this.state.obstacles, this.state.ladders);
+        const landingY = getPlayerLandingY(p.x, p.y, fallingPrevY, p.vy, this.walls, this.state.obstacles, this.state.ladders);
         if (landingY !== null && p.vy > 0) {
           p.y = landingY;
           p.vy = 0;
@@ -1624,7 +1642,7 @@ export class GameEngine {
         }
 
         // Main floor collision
-        const floorY = getNearestFloorY(p.x, p.y);
+        const floorY = this.isCustomMap ? this.floorY : getNearestFloorY(p.x, p.y);
         if (p.y >= floorY && p.vy > 0) {
           p.y = floorY;
           p.vy = 0;
@@ -1635,7 +1653,7 @@ export class GameEngine {
         }
 
         // Lower basement floor — only accessible in basement x range
-        if (p.y >= LOWER_FLOOR_Y && p.x >= BASEMENT_ENTRY_X) {
+        if (!this.isCustomMap && p.y >= LOWER_FLOOR_Y && p.x >= BASEMENT_ENTRY_X) {
           p.y = LOWER_FLOOR_Y;
           p.vy = 0;
           p.vx = 0;
@@ -1650,14 +1668,14 @@ export class GameEngine {
         let onSurface = false;
 
         // Check main floor
-        const floorY = getNearestFloorY(p.x, p.y);
+        const floorY = this.isCustomMap ? this.floorY : getNearestFloorY(p.x, p.y);
         if (Math.abs(p.y - floorY) < 8) {
           onSurface = true;
           p.y = floorY;
         }
 
         // Check platforms
-        for (const wall of MAZE_WALLS) {
+        for (const wall of this.walls) {
           if (!wall.isPlatform && !wall.solid) continue;
           if (Math.abs(p.y - wall.y) < 8) {
             if (p.x >= wall.x - 8 && p.x <= wall.x + wall.width + 8) {
@@ -1676,7 +1694,7 @@ export class GameEngine {
           }
         }
         // Check lower basement floor
-        if (Math.abs(p.y - LOWER_FLOOR_Y) < 8) {
+        if (!this.isCustomMap && Math.abs(p.y - LOWER_FLOOR_Y) < 8) {
           onSurface = true;
           p.y = LOWER_FLOOR_Y;
         }
@@ -1729,7 +1747,7 @@ export class GameEngine {
           p.x = ladder.x;
           // Check if climbing player reached an elevated platform along the ladder
           let reachedPlatformY: number | null = null;
-          for (const wall of MAZE_WALLS) {
+          for (const wall of this.walls) {
             if (!wall.isPlatform && !wall.solid) continue;
             if (wall.y < ladder.y + ladder.height - 20 && wall.y >= ladder.y - 10) {
               if (Math.abs(p.y - wall.y) <= 8 &&
@@ -1782,7 +1800,7 @@ export class GameEngine {
       // ── SOLID WALL HORIZONTAL COLLISION ──────────────────────────────────
       if (p.state === 'ON_FLOOR' || p.state === 'FALLING' || p.state === 'STUNNED') {
         const prevX = p.x;
-        p.x = resolveHorizontalWallCollision(p.x, p.y, 14, MAZE_WALLS);
+        p.x = resolveHorizontalWallCollision(p.x, p.y, 14, this.walls);
         if (p.x !== prevX) {
           // Pushed right (p.x > prevX) while moving left -> stop leftward velocity
           if (p.x > prevX && p.vx < 0) p.vx = 0;
@@ -1793,9 +1811,9 @@ export class GameEngine {
 
       // ── WORLD BOUNDS ─────────────────────────────────────────────────────
       if (p.x <= 35 && p.vx < 0) p.vx = 0;
-      if (p.x >= WORLD_WIDTH - 35 && p.vx > 0) p.vx = 0;
-      p.x = Math.max(35, Math.min(WORLD_WIDTH - 35, p.x));
-      p.y = Math.max(35, Math.min(LOWER_FLOOR_Y + 10, p.y));
+      if (p.x >= this.worldWidth - 35 && p.vx > 0) p.vx = 0;
+      p.x = Math.max(35, Math.min(this.worldWidth - 35, p.x));
+      p.y = Math.max(35, Math.min(this.isCustomMap ? this.floorY + 40 : LOWER_FLOOR_Y + 10, p.y));
 
       // ── MELEE TACKLE COLLISION ───────────────────────────────────────────
       if (p.stunnedTimer > 0 && p.vx !== 0 && p.state === 'ON_FLOOR') {

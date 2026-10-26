@@ -74,6 +74,7 @@ export class InputManager {
 
       if (code === 'Space') {
         e.preventDefault();
+        this.jumpRequested = true;
         if (!this.isSpaceDown) {
           this.isSpaceDown = true;
           this.spacePressTime = performance.now();

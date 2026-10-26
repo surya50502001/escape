@@ -320,6 +320,7 @@ export interface JoinMessage {
   resumeToken?: string;
   roomCode?: string;
   createRoom?: boolean;
+  mode?: 'survival' | 'campaign';
 }
 
 export interface WelcomeMessage {
@@ -329,6 +330,8 @@ export interface WelcomeMessage {
   resumeToken: string;
   phase: GamePhase;
   roomCode: string;
+  mode?: 'survival' | 'campaign';
+  roomId?: number;
 }
 
 export interface ErrorMessage {
@@ -339,7 +342,9 @@ export interface ErrorMessage {
 
 export interface SyncMessage {
   type: 'SYNC';
-  state: GameState;
+  mode?: 'survival' | 'campaign';
+  state?: GameState;
+  campaign?: any;
 }
 
 export interface InputMessage {

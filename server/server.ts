@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import { GameEngine } from './gameEngine.js';
 import { RoomManager, RoomSession, RoomClient, MatchRoom } from './rooms.js';
+import { campaignManager, CampaignManager, CampaignClient } from './campaign/campaignManager.js';
 import { ClientInput, MAX_PLAYERS, Player } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -127,7 +128,110 @@ wss.on('connection', (ws: WebSocket) => {
         const token = typeof data.resumeToken === 'string' ? data.resumeToken.trim() : '';
         const requestedCode = typeof data.roomCode === 'string' ? data.roomCode.trim().toUpperCase() : '';
         const shouldCreate = data.createRoom === true;
+        const isCampaign = data.mode === 'campaign' || data.createCampaign === true || requestedCode.startsWith('CAMP-');
 
+        // ══════════════════════════════════════════════════════════════════
+        // CAMPAIGN MODE (10-ROOM AUTHORITATIVE COOPERATIVE RUNTIME)
+        // ══════════════════════════════════════════════════════════════════
+        if (isCampaign) {
+          let targetCampaign = token ? campaignManager.findCampaignByToken(token) : undefined;
+
+          if (!targetCampaign) {
+            if (shouldCreate || data.createCampaign === true) {
+              targetCampaign = campaignManager.createCampaign();
+            } else if (requestedCode && requestedCode.startsWith('CAMP-')) {
+              targetCampaign = campaignManager.getCampaign(requestedCode);
+              if (!targetCampaign) {
+                ws.send(JSON.stringify({
+                  type: 'ERROR',
+                  code: 'ROOM_NOT_FOUND',
+                  message: `Campaign session "${requestedCode}" does not exist. Check code or create a new campaign.`
+                }));
+                return;
+              }
+            } else {
+              targetCampaign = campaignManager.getDefaultCampaign();
+            }
+          }
+
+          // Check for existing player in this campaign
+          let playerId = `p_${crypto.randomBytes(4).toString('hex')}`;
+          let resumeToken = token || crypto.randomUUID();
+          let existingPlayer = targetCampaign.players.get(playerId);
+
+          // Find existing player by token if reconnecting
+          if (token) {
+            for (const [pId, sess] of targetCampaign.playerSessions.entries()) {
+              if (sess.resumeToken === token) {
+                playerId = pId;
+                existingPlayer = targetCampaign.players.get(pId);
+                resumeToken = token;
+                break;
+              }
+            }
+          }
+
+          if (existingPlayer) {
+            existingPlayer.name = sanitizedName;
+          } else {
+            const player: Player = {
+              id: playerId,
+              name: sanitizedName,
+              isBot: false,
+              x: 100,
+              y: 544,
+              vx: 0,
+              vy: 0,
+              facing: 'RIGHT',
+              angle: 0,
+              color: '#3498db',
+              health: 100,
+              stamina: 100,
+              state: 'ON_FLOOR',
+              isGrounded: true,
+              stunnedTimer: 0,
+              tackleCooldown: 0,
+              attackCooldown: 0,
+              rocks: 3,
+              hasEscaped: false,
+              sabotages: 0,
+              climbKickTimer: 0,
+              climbAttackCooldown: 0,
+              climbGrabbingId: null,
+              grabbedByPlayerId: null,
+              struggleMeter: 0,
+              hazardCooldown: 0,
+              carryingLadderId: null
+            };
+            targetCampaign.addPlayer(player, 1, resumeToken);
+          }
+
+          campaignManager.associateTokenWithCampaign(resumeToken, targetCampaign.id);
+          campaignManager.clients.set(ws, {
+            ws,
+            playerId,
+            resumeToken,
+            campaignId: targetCampaign.id,
+            msgCount: 0,
+            lastResetTime: now
+          });
+
+          ws.send(JSON.stringify({
+            type: 'WELCOME',
+            mode: 'campaign',
+            playerId,
+            name: sanitizedName,
+            resumeToken,
+            phase: 'WAITING_SIGNAL',
+            roomCode: targetCampaign.id,
+            roomId: targetCampaign.getPlayerRoomId(playerId) || 1
+          }));
+          return;
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        // SURVIVAL MODE (LEGACY SINGLE-CHAMBER PIT PROTOCOL)
+        // ══════════════════════════════════════════════════════════════════
         let targetRoom: MatchRoom | undefined;
 
         // 1. Reconnection Check: Reconnect ONLY to player's original room
@@ -253,6 +357,20 @@ wss.on('connection', (ws: WebSocket) => {
         }));
 
       } else if (data.type === 'INPUT') {
+        // 1. Check if client is in a campaign session
+        const campaignClient = campaignManager.findClientBySocket(ws);
+        if (campaignClient) {
+          const validatedInput = sanitizeInput(data.input);
+          if (validatedInput) {
+            const camp = campaignManager.getCampaign(campaignClient.campaignId);
+            if (camp) {
+              camp.handleInput(campaignClient.playerId, validatedInput);
+            }
+          }
+          return;
+        }
+
+        // 2. Check if client is in a survival match room
         const room = roomManager.findRoomBySocket(ws);
         if (room) {
           const roomClient = room.clients.get(ws);
@@ -285,6 +403,7 @@ wss.on('connection', (ws: WebSocket) => {
 });
 
 export function handleClientDisconnect(ws: WebSocket, now: number = Date.now()): void {
+  campaignManager.handleClientDisconnect(ws);
   const room = roomManager.findRoomBySocket(ws) || defaultRoom;
   room.handleClientDisconnect(ws, now);
 }
@@ -295,6 +414,7 @@ if (isMain) {
   // Periodic Session Expiry Cleanup (every 5 seconds)
   setInterval(() => {
     roomManager.cleanAllExpiredSessions(Date.now());
+    campaignManager.cleanExpiredCampaigns(Date.now());
   }, 5000);
 
   // Authoritative Tick Loop at 30 FPS across all active rooms
@@ -302,6 +422,7 @@ if (isMain) {
 
   setInterval(() => {
     roomManager.updateAllRooms();
+    campaignManager.updateAllCampaigns();
   }, TICK_INTERVAL_MS);
 
   const PORT = Number(process.env.PORT) || 3001;

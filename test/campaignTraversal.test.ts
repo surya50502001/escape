@@ -41,11 +41,45 @@ import {
   DORM_LEDGE_Y, DORM_LEFT_X, DORM_RIGHT_X,
   MAINT_UPPER_LEDGE_Y, MAINT_UPPER_LEDGE_X, MAINT_UPPER_LEDGE_W,
   SHAFT_LEFT_X, SHAFT_RIGHT_X, BASEMENT_ENTRY_X,
-  MAZE_WALLS, ClientInput, WORLD_WIDTH
+  MAZE_WALLS, ClientInput, WORLD_WIDTH,
+  Player
 } from '../server/types.js';
 import { GameEngine, GRAVITY, DT } from '../server/gameEngine.js';
+import { CampaignSession } from '../server/campaign/campaignSession.js';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
+
+function makePlayer(id: string, name: string): Player {
+  return {
+    id,
+    name,
+    isBot: false,
+    x: 100,
+    y: 544,
+    vx: 0,
+    vy: 0,
+    facing: 'RIGHT',
+    angle: 0,
+    color: '#3498db',
+    health: 100,
+    stamina: 100,
+    state: 'ON_FLOOR',
+    isGrounded: true,
+    stunnedTimer: 0,
+    tackleCooldown: 0,
+    attackCooldown: 0,
+    rocks: 3,
+    hasEscaped: false,
+    sabotages: 0,
+    climbKickTimer: 0,
+    climbAttackCooldown: 0,
+    climbGrabbingId: null,
+    grabbedByPlayerId: null,
+    struggleMeter: 0,
+    hazardCooldown: 0,
+    carryingLadderId: null
+  };
+}
 
 function makeEngine(): GameEngine {
   const e = new GameEngine();
@@ -790,10 +824,36 @@ describe('Phase 2A — Room 9: Locked Storage', () => {
     assert.ok(3 >= 0 && 3 <= 20);
   });
 
-  it.skip('R9-SOFTLOCK-02 [NOT TESTED: runtime-dependent]: Room 9 state persists on backtrack — box_c remains unlocked on return', () => {
-    // Runtime behavior: requires campaign session state persistence across room transitions.
-    // Geometry check: entry_door [0,3,2,6] and backtrack entry are the same door — bidirectional.
-    // Marked as NOT TESTED until Phase 3/4 campaign runtime is implemented.
+  it('R9-SOFTLOCK-02: Room 9 state persists on backtrack — box_c remains unlocked on return', () => {
+    const session = new CampaignSession();
+    const p1 = makePlayer('p_r9_persist', 'Alice');
+    session.addPlayer(p1, 9);
+
+    const room9 = session.getOrCreateRoomRuntime(9);
+    // Alice unlocks Box C in Room 9
+    room9.unlockContainer('box_c');
+    assert.equal(room9.isContainerUnlocked('box_c'), true);
+
+    // Alice leaves to Room 10 via exit door
+    const exitDoor = room9.loadedRoom.doors.find(d => d.id === 'exit_door')!;
+    p1.x = exitDoor.rect.x + 5;
+    p1.y = exitDoor.rect.y + 5;
+    const transitioned = session.transitionPlayer('p_r9_persist', 10);
+    assert.equal(transitioned, true, 'Alice moves to Room 10');
+    assert.equal(session.getPlayerRoomId('p_r9_persist'), 10);
+
+    // Alice backtracks back to Room 9 via entry door
+    const room10 = session.getOrCreateRoomRuntime(10);
+    const returnDoor = room10.loadedRoom.doors.find(d => d.id === 'entry_door')!;
+    p1.x = returnDoor.rect.x + 5;
+    p1.y = returnDoor.rect.y + 5;
+    const backtracked = session.transitionPlayer('p_r9_persist', 9);
+    assert.equal(backtracked, true, 'Alice backtracks to Room 9');
+    assert.equal(session.getPlayerRoomId('p_r9_persist'), 9);
+
+    // Re-verify Room 9 state: Box C MUST STILL BE UNLOCKED!
+    const reenteredRoom9 = session.getOrCreateRoomRuntime(9);
+    assert.equal(reenteredRoom9.isContainerUnlocked('box_c'), true, 'Box C must remain unlocked on return');
   });
 
 });
@@ -899,10 +959,43 @@ describe('Phase 2A — Room 10: False Escape & Backtrack Loop', () => {
     assert.equal(doorY, floorY, 'Backtrack door is at floor level — solo accessible');
   });
 
-  it.skip('R10-PRESENCE-01 [NOT TESTED: runtime-dependent]: independent room presence — backtrack transition must not pull teammates', () => {
-    // Decision 5: Room 10→9 transition by one player must not affect players in Room 10.
-    // This is server runtime behavior requiring multi-room session management.
-    // Marked as NOT TESTED until Phase 4 campaign session runtime is implemented.
+  it('R10-PRESENCE-01: independent room presence — backtrack transition must not pull teammates', () => {
+    const session = new CampaignSession();
+    const p1 = makePlayer('p_r10_alice', 'Alice');
+    const p2 = makePlayer('p_r10_bob', 'Bob');
+
+    // Place both in Room 10
+    session.addPlayer(p1, 10);
+    session.addPlayer(p2, 10);
+
+    const room10 = session.getOrCreateRoomRuntime(10);
+    assert.equal(room10.getPlayers().length, 2);
+
+    // Position Alice at backtrack entry door (Room 10 -> 9: rect [0, 3, 2, 6] tiles)
+    const backtrackDoor = room10.loadedRoom.doors.find(d => d.id === 'entry_door')!;
+    p1.x = backtrackDoor.rect.x + backtrackDoor.rect.width / 2;
+    p1.y = backtrackDoor.rect.y + backtrackDoor.rect.height / 2;
+
+    // Keep Bob in the middle of Room 10
+    p2.x = 800;
+    p2.y = 544;
+
+    // Alice backtracks to Room 9
+    const transitioned = session.transitionPlayer('p_r10_alice', 9);
+    assert.equal(transitioned, true, 'Alice must be able to backtrack from Room 10 to Room 9');
+
+    // Core Decision 5 Assertion:
+    // Alice is now in Room 9
+    assert.equal(session.getPlayerRoomId('p_r10_alice'), 9);
+    // Bob MUST still be in Room 10 — not pulled along!
+    assert.equal(session.getPlayerRoomId('p_r10_bob'), 10, 'Bob must remain in Room 10 during Alice backtrack');
+    assert.equal(room10.getPlayer('p_r10_bob')?.x, 800, 'Bob position in Room 10 must be unchanged');
+    assert.equal(room10.getPlayers().length, 1, 'Only Bob should remain in Room 10');
+
+    // Room 9 only has Alice
+    const room9 = session.getOrCreateRoomRuntime(9);
+    assert.equal(room9.getPlayers().length, 1);
+    assert.equal(room9.getPlayer('p_r10_alice')?.id, 'p_r10_alice');
   });
 
 });
