@@ -9,6 +9,9 @@ import {
   MAZE_WALLS, WallRect
 } from '../server/types.js';
 import { ClientCampaignSync } from '../server/campaign/campaignSession.js';
+import { Room1Renderer } from './graphics/room1Renderer.js';
+import { CharacterRenderer } from './graphics/characterRenderer.js';
+import { LightingSystem } from './graphics/lighting.js';
 
 interface Particle {
   x: number;
@@ -153,7 +156,7 @@ export class GameRenderer {
     for (const p of state.players) {
       if (p.state !== 'DEAD' && !p.hasEscaped) {
         const isLocal = p.id === localPlayerId;
-        this.drawHumanPrisoner(ctx, p, isLocal);
+        CharacterRenderer.getInstance().drawPlayer(ctx, p, isLocal, now);
       }
     }
 
@@ -162,6 +165,9 @@ export class GameRenderer {
 
     ctx.restore();
     // ── END WORLD TRANSFORM ──────────────────────────────────
+
+    // Cinematic vignette
+    LightingSystem.getInstance().drawCinematicVignette(ctx, this.width, this.height);
 
     // 13. Draw Clean Tactical HUD & Timers in Viewport Space
     this.drawHUD(ctx, state, localPlayerId);
@@ -1635,6 +1641,9 @@ export class GameRenderer {
     ctx.save();
     ctx.translate(-Math.round(this.cameraX), -Math.round(this.cameraY));
 
+    if (campaign.roomId === 1) {
+      Room1Renderer.getInstance().render(ctx, campaign, now);
+    } else {
     // A. Room Background Paneling
     ctx.fillStyle = '#080c14';
     ctx.fillRect(0, 0, roomW, roomH);
@@ -2005,6 +2014,7 @@ export class GameRenderer {
         ctx.fillText('REINFORCED STEEL HATCH', 1264, 84);
       }
     }
+    }
 
     // G. Ground Items
     for (const item of campaign.groundItems) {
@@ -2042,7 +2052,7 @@ export class GameRenderer {
     for (const p of campaign.players) {
       if (p.state !== 'DEAD' && !p.hasEscaped) {
         const isLocal = p.id === localPlayerId;
-        this.drawHumanPrisoner(ctx, p, isLocal);
+        CharacterRenderer.getInstance().drawPlayer(ctx, p, isLocal, now);
 
         // Draw carried item icon floating above head
         if (isLocal && campaign.carriedItem) {
@@ -2063,6 +2073,9 @@ export class GameRenderer {
 
     ctx.restore();
     // ── END WORLD TRANSFORM ─────────────────────────────────────
+
+    // Atmospheric cinematic vignette
+    LightingSystem.getInstance().drawCinematicVignette(ctx, this.width, this.height);
 
     // 2. TACTICAL HUD (VIEWPORT SPACE)
     const ROOM_OBJECTIVES: Record<number, string> = {
