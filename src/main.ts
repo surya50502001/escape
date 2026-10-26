@@ -3,9 +3,12 @@ import { ClientCampaignSync } from '../server/campaign/campaignSession.js';
 import { GameRenderer } from './renderer.js';
 import { InputManager } from './input.js';
 import { sound } from './audio.js';
+import { ThreeGameRenderer } from './graphics3d/threeRenderer.js';
 
 // DOM elements
 const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
+const webglCanvas = document.getElementById('webglCanvas') as HTMLCanvasElement | null;
+const rendererToggleBtn = document.getElementById('rendererToggleBtn') as HTMLButtonElement | null;
 const audioBtn = document.getElementById('audioBtn') as HTMLButtonElement;
 const statusDiv = document.getElementById('status') as HTMLDivElement;
 const readyBtn = document.getElementById('readyBtn') as HTMLButtonElement | null;
@@ -28,6 +31,52 @@ const connectingText = document.getElementById('connectingText') as HTMLSpanElem
 
 const renderer = new GameRenderer(canvas);
 const inputManager = new InputManager(canvas);
+
+let threeRenderer: ThreeGameRenderer | null = null;
+let activeRendererMode: '3d' | '2d' = '3d';
+
+if (webglCanvas) {
+  try {
+    threeRenderer = ThreeGameRenderer.getInstance(webglCanvas);
+    (window as any).threeRenderer = threeRenderer;
+  } catch (err) {
+    console.warn('[Graphics] Failed to initialize ThreeGameRenderer, falling back to 2D:', err);
+    activeRendererMode = '2d';
+  }
+} else {
+  activeRendererMode = '2d';
+}
+
+if (rendererToggleBtn) {
+  const updateToggleBtnText = () => {
+    if (activeRendererMode === '3d') {
+      rendererToggleBtn.textContent = '🎨 3D Realistic';
+      rendererToggleBtn.title = 'Switch to 2D Classic Canvas renderer';
+      rendererToggleBtn.style.background = '#0284c7';
+      rendererToggleBtn.style.borderColor = '#38bdf8';
+      if (webglCanvas) webglCanvas.style.display = 'block';
+    } else {
+      rendererToggleBtn.textContent = '📐 2D Classic';
+      rendererToggleBtn.title = 'Switch to 3D Realistic (Three.js) renderer';
+      rendererToggleBtn.style.background = '#334155';
+      rendererToggleBtn.style.borderColor = '#64748b';
+      if (webglCanvas) webglCanvas.style.display = 'none';
+    }
+  };
+
+  rendererToggleBtn.addEventListener('click', () => {
+    if (!threeRenderer || !threeRenderer.isReady()) {
+      alert('3D WebGL renderer is unavailable on this device. Using 2D Classic mode.');
+      activeRendererMode = '2d';
+      updateToggleBtnText();
+      return;
+    }
+    activeRendererMode = activeRendererMode === '3d' ? '2d' : '3d';
+    updateToggleBtnText();
+  });
+
+  updateToggleBtnText();
+}
 
 let localPlayerId: string = '';
 let localPlayerName: string = '';
@@ -467,11 +516,29 @@ setInterval(() => {
 
 // Render loop (60 FPS)
 function gameLoop() {
+  const use3D = activeRendererMode === '3d' && threeRenderer && threeRenderer.isReady();
+
   if (isCampaignMode && latestCampaignState) {
-    renderer.renderCampaign(latestCampaignState, localPlayerId);
-    (window as unknown as { cameraX: number; cameraY: number }).cameraX = renderer.getCameraX();
-    (window as unknown as { cameraY: number }).cameraY = renderer.getCameraY();
+    if (use3D && latestCampaignState.roomId === 1) {
+      if (webglCanvas && webglCanvas.style.display === 'none') {
+        webglCanvas.style.display = 'block';
+      }
+      threeRenderer!.renderCampaign(latestCampaignState, localPlayerId);
+      renderer.renderCampaignOverlay(latestCampaignState, localPlayerId);
+      (window as unknown as { cameraX: number; cameraY: number }).cameraX = threeRenderer!.getCameraX();
+      (window as unknown as { cameraY: number }).cameraY = threeRenderer!.getCameraY();
+    } else {
+      if (webglCanvas && webglCanvas.style.display !== 'none') {
+        webglCanvas.style.display = 'none';
+      }
+      renderer.renderCampaign(latestCampaignState, localPlayerId);
+      (window as unknown as { cameraX: number; cameraY: number }).cameraX = renderer.getCameraX();
+      (window as unknown as { cameraY: number }).cameraY = renderer.getCameraY();
+    }
   } else if (latestState) {
+    if (webglCanvas && webglCanvas.style.display !== 'none') {
+      webglCanvas.style.display = 'none';
+    }
     renderer.render(latestState, localPlayerId);
     (window as unknown as { cameraX: number; cameraY: number }).cameraX = renderer.getCameraX();
     (window as unknown as { cameraY: number }).cameraY = renderer.getCameraY();

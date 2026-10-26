@@ -2078,6 +2078,17 @@ export class GameRenderer {
     LightingSystem.getInstance().drawCinematicVignette(ctx, this.width, this.height);
 
     // 2. TACTICAL HUD (VIEWPORT SPACE)
+    this.renderCampaignHUD(campaign, localPlayerId);
+  }
+
+  public renderCampaignOverlay(campaign: ClientCampaignSync, localPlayerId: string): void {
+    this.ctx.clearRect(0, 0, this.width, this.height);
+    this.renderCampaignHUD(campaign, localPlayerId);
+  }
+
+  public renderCampaignHUD(campaign: ClientCampaignSync, localPlayerId: string): void {
+    const ctx = this.ctx;
+    const localPlayer = campaign.players.find(p => p.id === localPlayerId);
     const ROOM_OBJECTIVES: Record<number, string> = {
       1: "Boost teammate to upper walkway [W/SPACE], lower rope [E] for team.",
       2: "Traverse movable crate and stepping platforms to reach upper exit.",
