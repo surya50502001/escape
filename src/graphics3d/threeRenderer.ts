@@ -42,9 +42,10 @@ export class ThreeGameRenderer {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x07090d);
 
-    // 2.5D Orthographic Camera aligned with viewport dimensions
-    const halfW = this.width / 2;
-    const halfH = this.height / 2;
+    // 2.5D Orthographic Camera — zoom factor 1.6 brings characters ~60% closer
+    const zoom = 1.6;
+    const halfW = (this.width / 2) / zoom;
+    const halfH = (this.height / 2) / zoom;
     this.camera = new THREE.OrthographicCamera(
       -halfW, halfW,
       halfH, -halfH,

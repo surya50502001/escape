@@ -3,6 +3,7 @@ import { Player, ClientInput, Ladder, WallRect } from '../types.js';
 import { CampaignProjectSpec, TransitionNetworkEdge } from './types.js';
 import { loadCampaignSpec, loadRoomFromSpec, DoorTrigger, SafeZone } from './roomLoader.js';
 import { RoomRuntime, RoomPersistentState, CampaignItem, InteractionResult } from './roomRuntime.js';
+import { IntroSequence, IntroSequenceState } from './introSequence.js';
 
 export interface CampaignPlayerSession {
   playerId: string;
@@ -37,6 +38,7 @@ export interface ClientCampaignSync {
   };
   interactionPrompt: string | null;
   teamRoster: Array<{ id: string; name: string; roomId: number }>;
+  intro: IntroSequenceState | null;
 }
 
 /**
@@ -58,6 +60,7 @@ export class CampaignSession {
   public persistentStates: Map<number, RoomPersistentState> = new Map();
   public lastInteractPressed: Map<string, boolean> = new Map();
   public campaignComplete: boolean = false;
+  public intro: IntroSequence = new IntroSequence();
 
   constructor(id?: string, spec?: CampaignProjectSpec) {
     this.id = id || `CAMP-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
@@ -109,6 +112,12 @@ export class CampaignSession {
     player.state = 'ON_FLOOR';
 
     room.addPlayer(player);
+
+    // Start intro sequence when first player joins room 1
+    if (initialRoomId === 1 && !this.intro.hasStarted() && !this.intro.isComplete()) {
+      this.intro.start();
+    }
+
     return true;
   }
 
@@ -211,6 +220,17 @@ export class CampaignSession {
     player.vy = 0;
     player.isGrounded = true;
     player.state = 'ON_FLOOR';
+    player.stunnedTimer = 0;
+    player.tackleCooldown = 0;
+    player.attackCooldown = 0;
+
+    // Snap player Y to the target room's floor if staging rect places them above it
+    const targetFloor = targetRoom.loadedRoom.floorYPx;
+    if (player.y < targetFloor - 10) {
+      // Keep Y as set by staging rect (they may be on an elevated platform)
+    } else {
+      player.y = targetFloor;
+    }
 
     // Move carried item with player
     const carried = this.playerItems.get(playerId);
@@ -336,6 +356,8 @@ export class CampaignSession {
    * Advance physics in all active rooms.
    */
   public update(): void {
+    const DT = 1 / 30;
+    this.intro.update(DT);
     for (const room of this.activeRooms.values()) {
       room.update();
     }
@@ -345,6 +367,9 @@ export class CampaignSession {
    * Process client input and authoritative room interactions.
    */
   public handleInput(playerId: string, input: ClientInput): void {
+    // Block all player input during the opening cinematic
+    if (this.intro.isInputLocked()) return;
+
     const room = this.getPlayerRoom(playerId);
     if (!room) return;
 
@@ -476,7 +501,8 @@ export class CampaignSession {
         campaignComplete: this.campaignComplete
       },
       interactionPrompt: player ? room.getPrompt(player, carried || undefined) : null,
-      teamRoster
+      teamRoster,
+      intro: (this.intro.hasStarted() && !this.intro.isComplete()) ? { ...this.intro.state } : null
     };
   }
 }

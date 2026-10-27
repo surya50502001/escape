@@ -1601,6 +1601,205 @@ export class GameRenderer {
   }
 
   // =========================================================================
+  // OPENING PRISON CINEMATIC (intro sequence overlay — screen space)
+  // =========================================================================
+  private renderIntroSequence(ctx: CanvasRenderingContext2D, intro: { phase: string; elapsed: number; keyStolen: boolean; doorUnlocked: boolean }): void {
+    const now = performance.now();
+    const W = this.width;
+    const H = this.height;
+
+    // Letterbox bars
+    ctx.fillStyle = 'rgba(0,0,0,0.78)';
+    ctx.fillRect(0, 0, W, H * 0.14);
+    ctx.fillRect(0, H * 0.86, W, H * 0.14);
+
+    // Scene anchor points in screen space (centred in the playable letterbox area)
+    const sceneY = H * 0.72;          // floor line
+    const centerX = W * 0.5;
+    const t = intro.elapsed;
+
+    if (intro.phase === 'ARRIVE') {
+      const progress = Math.min(1, t / 3.0);
+      // Jailer walks in from right
+      const jailerX = W * 0.85 - progress * W * 0.45;
+      this.drawCinematicFigure(ctx, jailerX, sceneY, '#1a2a1a', '#2d4a2d', true, now);
+      // Key ring on jailer belt
+      this.drawKeyRing(ctx, jailerX + 14, sceneY - 16);
+      // Prisoners following
+      for (let i = 0; i < 3; i++) {
+        const px = jailerX - 60 - i * 50;
+        this.drawCinematicFigure(ctx, px, sceneY, '#254463', '#39638f', false, now + i * 300);
+      }
+      this.drawCinematicCaption(ctx, 'PRISONERS ESCORTED TO CELL BLOCK B', W, H);
+
+    } else if (intro.phase === 'LOCK') {
+      const jailerX = centerX - W * 0.25;
+      const doorX = centerX - W * 0.38;
+      this.drawCinematicFigure(ctx, jailerX, sceneY, '#1a2a1a', '#2d4a2d', true, now);
+      // Cell door frame
+      ctx.strokeStyle = '#475569';
+      ctx.lineWidth = 4;
+      ctx.strokeRect(doorX, sceneY - 90, 44, 90);
+      // Lock bolt sliding in
+      const lockP = Math.min(1, t / 1.5);
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillRect(doorX + 38, sceneY - 55 + lockP * 10, 10, 12);
+      // Key ring at door
+      this.drawKeyRing(ctx, doorX + 20, sceneY - 50);
+      // Prisoners inside
+      for (let i = 0; i < 3; i++) {
+        this.drawCinematicFigure(ctx, centerX + 20 + i * 50, sceneY, '#254463', '#39638f', false, now + i * 200);
+      }
+      this.drawCinematicCaption(ctx, 'JAILER LOCKS THE CELL DOOR', W, H);
+
+    } else if (intro.phase === 'STEAL') {
+      const walkP = Math.min(1, t / 3.0);
+      const jailerX = centerX - W * 0.1 + walkP * W * 0.25;
+      const ghostX = centerX - W * 0.3;
+      const stealP = Math.min(1, t / 1.5);
+      const keyOnGhost = stealP >= 0.8;
+
+      this.drawCinematicFigure(ctx, jailerX, sceneY, '#1a2a1a', '#2d4a2d', true, now);
+      this.drawCinematicFigure(ctx, ghostX, sceneY, '#7c3aed', '#a855f7', false, now);
+
+      // Reaching arm
+      if (!keyOnGhost) {
+        const armTargetX = ghostX + (jailerX - ghostX) * stealP;
+        ctx.strokeStyle = '#cf9972';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(ghostX + 10, sceneY - 22);
+        ctx.lineTo(armTargetX, sceneY - 16);
+        ctx.stroke();
+      }
+
+      // Key position
+      const keyX = keyOnGhost ? ghostX + 16 : jailerX + 14;
+      this.drawKeyRing(ctx, keyX, sceneY - 16);
+
+      // Flash on steal
+      if (stealP >= 0.78 && stealP < 0.95) {
+        const fa = (0.95 - stealP) / 0.17;
+        ctx.fillStyle = `rgba(251,191,36,${fa * 0.5})`;
+        ctx.beginPath();
+        ctx.arc(keyX, sceneY - 16, 22, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      for (let i = 0; i < 2; i++) {
+        this.drawCinematicFigure(ctx, centerX + 20 + i * 50, sceneY, '#254463', '#39638f', false, now + i * 200);
+      }
+      this.drawCinematicCaption(ctx, keyOnGhost ? '\uD83D\uDD11 KEY STOLEN!' : 'GHOST STEALS THE KEY...', W, H);
+
+    } else if (intro.phase === 'SIGNAL') {
+      const openP = Math.min(1, t / 2.0);
+      const ghostX = centerX - W * 0.3;
+      const doorX = centerX - W * 0.38;
+
+      this.drawCinematicFigure(ctx, ghostX, sceneY, '#7c3aed', '#a855f7', false, now);
+      this.drawKeyRing(ctx, ghostX + 16, sceneY - 16);
+
+      // Door swinging open
+      ctx.strokeStyle = '#475569';
+      ctx.lineWidth = 4;
+      ctx.strokeRect(doorX, sceneY - 90, 44, 90);
+      ctx.strokeStyle = '#22c55e';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(doorX, sceneY - 90);
+      ctx.lineTo(doorX + openP * 55, sceneY);
+      ctx.stroke();
+
+      // Signal arcs
+      const waveA = 0.5 + Math.sin(now * 0.01) * 0.3;
+      ctx.strokeStyle = `rgba(168,85,247,${waveA})`;
+      ctx.lineWidth = 2;
+      for (let r = 18; r <= 50; r += 16) {
+        ctx.beginPath();
+        ctx.arc(ghostX, sceneY - 22, r, -Math.PI * 0.6, Math.PI * 0.6);
+        ctx.stroke();
+      }
+
+      // Prisoners moving toward door
+      for (let i = 0; i < 3; i++) {
+        const px = centerX + 20 + i * 50 - openP * (50 + i * 20);
+        this.drawCinematicFigure(ctx, px, sceneY, '#254463', '#39638f', false, now + i * 150);
+      }
+      this.drawCinematicCaption(ctx, 'GHOST SIGNALS \u2014 THE ESCAPE BEGINS!', W, H);
+    }
+  }
+
+  private drawKeyRing(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+    ctx.fillStyle = '#f59e0b';
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#d97706';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath();
+      ctx.moveTo(x + 6 + i * 2, y - 2);
+      ctx.lineTo(x + 6 + i * 2, y + 2);
+      ctx.stroke();
+    }
+  }
+
+  private drawCinematicFigure(
+    ctx: CanvasRenderingContext2D,
+    x: number, y: number,
+    bodyColor: string, accentColor: string,
+    isGuard: boolean,
+    now: number
+  ): void {
+    const walkCycle = Math.sin(now * 0.012);
+    ctx.save();
+    ctx.translate(x, y);
+    // Legs
+    ctx.strokeStyle = isGuard ? '#1a2a1a' : '#1e293b';
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-2, -12); ctx.lineTo(-4 + walkCycle * 6, 0);
+    ctx.moveTo(2, -12);  ctx.lineTo(4 - walkCycle * 6, 0);
+    ctx.stroke();
+    // Torso
+    ctx.fillStyle = bodyColor;
+    ctx.fillRect(-6, isGuard ? -32 : -28, 12, isGuard ? 20 : 16);
+    ctx.fillStyle = accentColor;
+    ctx.fillRect(-6, isGuard ? -32 : -28, 12, 3);
+    // Head
+    ctx.fillStyle = '#cf9972';
+    ctx.beginPath();
+    ctx.arc(0, isGuard ? -38 : -34, isGuard ? 7 : 6, 0, Math.PI * 2);
+    ctx.fill();
+    // Guard hat
+    if (isGuard) {
+      ctx.fillStyle = '#1a2a1a';
+      ctx.fillRect(-8, -48, 16, 5);
+      ctx.fillRect(-5, -53, 10, 6);
+    }
+    ctx.restore();
+  }
+
+  private drawCinematicCaption(ctx: CanvasRenderingContext2D, text: string, W: number, H: number): void {
+    const pW = 520;
+    const pX = W / 2 - pW / 2;
+    const pY = H * 0.86 + 10;
+    ctx.fillStyle = 'rgba(15,23,42,0.88)';
+    ctx.fillRect(pX, pY, pW, 28);
+    ctx.strokeStyle = 'rgba(56,189,248,0.5)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(pX, pY, pW, 28);
+    ctx.fillStyle = '#e2e8f0';
+    ctx.font = 'bold 13px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, W / 2, pY + 19);
+  }
+
+  // =========================================================================
   // 10-ROOM AUTHORITATIVE COOPERATIVE CAMPAIGN RENDERER
   // =========================================================================
   public renderCampaign(campaign: ClientCampaignSync, localPlayerId: string): void {
@@ -2077,12 +2276,20 @@ export class GameRenderer {
     // Atmospheric cinematic vignette
     LightingSystem.getInstance().drawCinematicVignette(ctx, this.width, this.height);
 
+    // Opening cinematic overlay (rendered in viewport space, after world transform is restored)
+    if (campaign.intro && campaign.intro.phase !== 'PLAY') {
+      this.renderIntroSequence(ctx, campaign.intro);
+    }
+
     // 2. TACTICAL HUD (VIEWPORT SPACE)
     this.renderCampaignHUD(campaign, localPlayerId);
   }
 
   public renderCampaignOverlay(campaign: ClientCampaignSync, localPlayerId: string): void {
     this.ctx.clearRect(0, 0, this.width, this.height);
+    if (campaign.intro && campaign.intro.phase !== 'PLAY') {
+      this.renderIntroSequence(this.ctx, campaign.intro);
+    }
     this.renderCampaignHUD(campaign, localPlayerId);
   }
 
