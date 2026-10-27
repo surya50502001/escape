@@ -13,22 +13,34 @@ export interface Player3DInstance {
   visualY: number;
   targetX: number;
   targetY: number;
+  paletteIndex: number;
 }
 
-const PLAYER_PALETTES: Record<string, { bodyColor: number; emissive: number }> = {
-  atlas: { bodyColor: 0x93c5fd, emissive: 0x051329 },   // Slate / Denim blue prison uniform
-  beacon: { bodyColor: 0xfb923c, emissive: 0x220c02 },  // Hazard orange prison jumpsuit
-  carter: { bodyColor: 0xfde047, emissive: 0x1c1704 },  // Detention khaki
-  davis: { bodyColor: 0x86efac, emissive: 0x051a0b },   // Prison olive green
-  default: { bodyColor: 0x93c5fd, emissive: 0x051329 }
-};
+export interface UniformPalette {
+  bodyColor: number;
+  emissive: number;
+  name: string;
+}
+
+export const UNIFORM_PALETTES: UniformPalette[] = [
+  { bodyColor: 0x93c5fd, emissive: 0x051329, name: 'Denim Slate Blue' },      // Inmate 0 / Host
+  { bodyColor: 0xfb923c, emissive: 0x220c02, name: 'Hazard Orange' },         // Inmate 1 / Partner
+  { bodyColor: 0xfde047, emissive: 0x1c1704, name: 'Detention Khaki' },       // Inmate 2
+  { bodyColor: 0x86efac, emissive: 0x051a0b, name: 'Prison Olive' },          // Inmate 3
+  { bodyColor: 0xf87171, emissive: 0x220505, name: 'Maximum Security Red' },  // Inmate 4
+  { bodyColor: 0xc084fc, emissive: 0x180528, name: 'Solitary Violet' },       // Inmate 5
+  { bodyColor: 0x22d3ee, emissive: 0x041a20, name: 'Medical Cyan' },          // Inmate 6
+  { bodyColor: 0xa3e635, emissive: 0x101a04, name: 'Sanitation Lime' },       // Inmate 7
+];
 
 export class CharacterModelManager {
   private static instance: CharacterModelManager | null = null;
   private loader: GLTFLoader;
   public baseGltf: any = null;
   public isLoaded: boolean = false;
+  public isLoading: boolean = false;
   public loadError: Error | null = null;
+  private loadPromise: Promise<void> | null = null;
   public playerInstances: Map<string, Player3DInstance> = new Map();
   public scene: THREE.Scene | null = null;
 
@@ -47,34 +59,65 @@ export class CharacterModelManager {
     this.scene = scene;
     if (this.isLoaded) return Promise.resolve();
     if (this.loadError) return Promise.reject(this.loadError);
+    if (this.isLoading && this.loadPromise) return this.loadPromise;
 
-    return new Promise((resolve, reject) => {
+    this.isLoading = true;
+    this.loadPromise = new Promise((resolve, reject) => {
       this.loader.load(
         '/models/Soldier.glb',
         (gltf) => {
           this.baseGltf = gltf;
           this.isLoaded = true;
+          this.isLoading = false;
           console.log('[Three.js 2.5D] Successfully loaded realistic humanoid character model (Soldier.glb)');
           resolve();
         },
         undefined,
         (err) => {
           this.loadError = err instanceof Error ? err : new Error(String(err));
+          this.isLoaded = false;
+          this.isLoading = false;
           console.error('[Three.js 2.5D] Failed to load 3D character model:', err);
           reject(this.loadError);
         }
       );
     });
+
+    return this.loadPromise;
   }
 
   public getIsReady(): boolean {
-    return this.isLoaded && this.baseGltf !== null;
+    return this.isLoaded && this.baseGltf !== null && !this.loadError;
+  }
+
+  public getIsLoading(): boolean {
+    return this.isLoading;
+  }
+
+  public getLoadError(): Error | null {
+    return this.loadError;
+  }
+
+  /**
+   * Deterministically assign a uniform palette index independently of display names.
+   * Priority: team roster index (e.g. Inmate 1, Inmate 2) -> deterministic hash of player ID.
+   */
+  public static resolvePaletteIndex(p: Player, rosterIndex: number = -1): number {
+    if (rosterIndex >= 0) {
+      return rosterIndex % UNIFORM_PALETTES.length;
+    }
+    let hash = 0;
+    const str = p.id || '';
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+    }
+    return hash % UNIFORM_PALETTES.length;
   }
 
   /**
    * Synchronize active 3D character instances with authoritative server players.
    */
-  public updatePlayers(players: Player[], dt: number): void {
+  public updatePlayers(players: Player[], dt: number, teamRoster?: { id: string; name: string }[]): void {
     if (!this.isLoaded || !this.scene || !this.baseGltf) return;
 
     const activeIds = new Set(players.map(p => p.id));
@@ -88,7 +131,8 @@ export class CharacterModelManager {
     }
 
     // Update or spawn each player
-    for (const p of players) {
+    for (let i = 0; i < players.length; i++) {
+      const p = players[i];
       if (p.state === 'DEAD' || p.hasEscaped) {
         const inst = this.playerInstances.get(p.id);
         if (inst) {
@@ -97,9 +141,18 @@ export class CharacterModelManager {
         continue;
       }
 
+      let rosterIdx = -1;
+      if (teamRoster && Array.isArray(teamRoster)) {
+        rosterIdx = teamRoster.findIndex(m => m.id === p.id);
+      }
+      if (rosterIdx < 0) {
+        rosterIdx = i;
+      }
+      const paletteIndex = CharacterModelManager.resolvePaletteIndex(p, rosterIdx);
+
       let inst = this.playerInstances.get(p.id);
       if (!inst) {
-        const created = this.createPlayerInstance(p);
+        const created = this.createPlayerInstance(p, paletteIndex);
         if (created) {
           inst = created;
           this.playerInstances.set(p.id, inst);
@@ -109,15 +162,36 @@ export class CharacterModelManager {
 
       if (inst) {
         inst.root.visible = true;
+        this.applyUniformPalette(inst, paletteIndex);
         this.updateInstancePhysicsAndAnimation(inst, p, dt);
       }
     }
   }
 
   /**
+   * Apply uniform jumpsuit tinting to character mesh.
+   */
+  private applyUniformPalette(inst: Player3DInstance, paletteIndex: number): void {
+    if (inst.paletteIndex === paletteIndex) return;
+    inst.paletteIndex = paletteIndex;
+    const palette = UNIFORM_PALETTES[paletteIndex % UNIFORM_PALETTES.length];
+
+    inst.root.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh && child.name === 'vanguard_Mesh') {
+        const mesh = child as THREE.Mesh;
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        if (mat && mat.color) {
+          mat.color.setHex(palette.bodyColor);
+          if (mat.emissive) mat.emissive.setHex(palette.emissive);
+        }
+      }
+    });
+  }
+
+  /**
    * Instantiate and configure a rigged 3D character for a player.
    */
-  private createPlayerInstance(p: Player): Player3DInstance | null {
+  private createPlayerInstance(p: Player, paletteIndex: number): Player3DInstance | null {
     try {
       const clonedScene = SkeletonUtils.clone(this.baseGltf.scene) as THREE.Group;
 
@@ -129,8 +203,7 @@ export class CharacterModelManager {
       clonedScene.scale.set(scale, scale, scale);
 
       // Enable real-time shadow casting and receiving on all skinned meshes
-      const palKey = (p.name || '').trim().toLowerCase();
-      const palette = PLAYER_PALETTES[palKey] || PLAYER_PALETTES.default;
+      const palette = UNIFORM_PALETTES[paletteIndex % UNIFORM_PALETTES.length];
 
       clonedScene.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
@@ -173,10 +246,12 @@ export class CharacterModelManager {
         }
       }
 
-      // Start with Idle action
-      let defaultActionName = 'Idle';
-      if (actions[defaultActionName]) {
-        actions[defaultActionName].play();
+      // Safe initialization: resolve an available action (or Idle)
+      let initialActionName = 'Idle';
+      const initialAction = actions['Idle'] || actions['Walk'] || actions['Run'] || (Object.values(actions)[0] ?? null);
+      if (initialAction) {
+        initialAction.play();
+        initialActionName = initialAction.getClip().name;
       }
 
       return {
@@ -184,16 +259,49 @@ export class CharacterModelManager {
         root: clonedScene,
         mixer,
         actions,
-        currentActionName: defaultActionName,
+        currentActionName: initialActionName,
         visualX: p.x,
         visualY: p.y,
         targetX: p.x,
-        targetY: p.y
+        targetY: p.y,
+        paletteIndex
       };
     } catch (err) {
       console.error('[Three.js 2.5D] Error creating 3D character instance:', err);
       return null;
     }
+  }
+
+  /**
+   * Safely resolve an action clip, falling back down the candidate hierarchy if requested clip is missing.
+   */
+  public resolveAction(inst: Player3DInstance, desired: string): { actionName: string; action: THREE.AnimationAction } | null {
+    if (inst.actions[desired]) {
+      return { actionName: desired, action: inst.actions[desired] };
+    }
+
+    const fallbacks: Record<string, string[]> = {
+      Run: ['Walk', 'Idle'],
+      Walk: ['Run', 'Idle'],
+      Climb: ['Walk', 'Idle'],
+      Jump: ['Run', 'Walk', 'Idle'],
+      Fall: ['Walk', 'Run', 'Idle'],
+      Idle: ['Walk', 'Run']
+    };
+
+    const candidates = fallbacks[desired] || ['Idle', 'Walk', 'Run'];
+    for (const name of candidates) {
+      if (inst.actions[name]) {
+        return { actionName: name, action: inst.actions[name] };
+      }
+    }
+
+    const keys = Object.keys(inst.actions);
+    if (keys.length > 0 && inst.actions[keys[0]]) {
+      return { actionName: keys[0], action: inst.actions[keys[0]] };
+    }
+
+    return null;
   }
 
   /**
@@ -216,13 +324,17 @@ export class CharacterModelManager {
     inst.root.position.set(inst.visualX, -inst.visualY, 0);
 
     // 2. Character Facing / Rotation
+    // In Soldier.glb, the base mesh forward vector (visor/face) points along -Z.
+    // Three.js Y-axis rotation: forward vector becomes (-sin(θ), 0, -cos(θ)).
+    // - Facing RIGHT (+X): θ = -π/2  => (-sin(-π/2), 0, -cos(-π/2)) = (+1, 0, 0)
+    // - Facing LEFT  (-X): θ = +π/2  => (-sin(+π/2), 0, -cos(+π/2)) = (-1, 0, 0)
+    // - Climbing (inward into wall, -Z): θ = 0 => (-sin(0), 0, -cos(0)) = (0, 0, -1)
     if (p.state === 'CLIMBING_LADDER' || p.state === 'CLIMBING_V_PIPE') {
-      // Face inward toward the wall / ladder
-      inst.root.rotation.y = Math.PI;
+      inst.root.rotation.y = 0;
     } else if (p.facing === 'RIGHT') {
-      inst.root.rotation.y = Math.PI / 2;
-    } else {
       inst.root.rotation.y = -Math.PI / 2;
+    } else {
+      inst.root.rotation.y = Math.PI / 2;
     }
 
     // 3. Animation State Selection & Cross-fading
@@ -237,11 +349,22 @@ export class CharacterModelManager {
       // Climbing locomotion
       desiredAction = absVy > 10 ? 'Walk' : 'Idle';
       playbackSpeed = Math.max(0.6, absVy / 120);
+    } else if (p.state === 'HANGING_H_PIPE') {
+      // Horizontal pipe locomotion
+      desiredAction = absVx > 10 ? 'Walk' : 'Idle';
+      playbackSpeed = Math.max(0.6, absVx / 90);
+    } else if (p.state === 'STUNNED') {
+      // Stunned on impact
+      desiredAction = 'Idle';
+      playbackSpeed = 0.5;
     } else if (isAirborne) {
       // Jump / Fall arc: Use forward leaping stride if moving horizontally, else dynamic ready stance
       if (absVx > 30) {
         desiredAction = 'Run';
         playbackSpeed = 0.8;
+      } else if (p.vy > 50) {
+        desiredAction = 'Walk';
+        playbackSpeed = 0.5;
       } else {
         desiredAction = 'Idle';
         playbackSpeed = 1.0;
@@ -259,22 +382,19 @@ export class CharacterModelManager {
       }
     }
 
-    // Cross-fade animation clips
-    if (desiredAction !== inst.currentActionName && inst.actions[desiredAction]) {
-      const prevAction = inst.actions[inst.currentActionName];
-      const nextAction = inst.actions[desiredAction];
-
-      if (prevAction) {
-        prevAction.fadeOut(0.2);
+    // Safely cross-fade animation clips with fallback hierarchy
+    const resolved = this.resolveAction(inst, desiredAction);
+    if (resolved) {
+      if (resolved.actionName !== inst.currentActionName) {
+        const prevAction = inst.actions[inst.currentActionName];
+        if (prevAction) {
+          prevAction.fadeOut(0.2);
+        }
+        resolved.action.reset().fadeIn(0.2).play();
+        inst.currentActionName = resolved.actionName;
       }
-      nextAction.reset().fadeIn(0.2).play();
-      inst.currentActionName = desiredAction;
-    }
 
-    // Set playback rate on current active action
-    const currentAction = inst.actions[inst.currentActionName];
-    if (currentAction) {
-      currentAction.setEffectiveTimeScale(playbackSpeed);
+      resolved.action.setEffectiveTimeScale(playbackSpeed);
     }
 
     // Advance skeletal bone animation

@@ -23,6 +23,7 @@ export class ThreeGameRenderer {
   private isInitialized: boolean = false;
   private initError: Error | null = null;
   private lastTime: number = performance.now();
+  public onStatusChange?: () => void;
 
   public static getInstance(canvas?: HTMLCanvasElement): ThreeGameRenderer {
     if (!ThreeGameRenderer.instance) {
@@ -74,21 +75,46 @@ export class ThreeGameRenderer {
       this.renderer.shadowMap.enabled = true;
       this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-      this.charManager.init(this.scene).catch((err) => {
-        console.warn('[Three.js 2.5D] Character model loading error:', err);
-      });
+      this.charManager.init(this.scene)
+        .then(() => {
+          this.onStatusChange?.();
+        })
+        .catch((err) => {
+          console.warn('[Three.js 2.5D] Character model loading error:', err);
+          this.onStatusChange?.();
+        });
 
       this.isInitialized = true;
       console.log('[Three.js 2.5D] WebGL2 Renderer initialized successfully');
+      this.onStatusChange?.();
     } catch (err) {
       this.initError = err instanceof Error ? err : new Error(String(err));
       console.error('[Three.js 2.5D] WebGL initialization failed:', err);
       this.isInitialized = false;
+      this.onStatusChange?.();
     }
   }
 
-  public isReady(): boolean {
+  public isWebGLSupported(): boolean {
     return this.isInitialized && this.renderer !== null && this.initError === null;
+  }
+
+  public isAssetLoading(): boolean {
+    return this.isWebGLSupported() && this.charManager.getIsLoading();
+  }
+
+  public hasAssetError(): boolean {
+    return !this.isWebGLSupported() || this.charManager.getLoadError() !== null;
+  }
+
+  public getAssetErrorMessage(): string | null {
+    if (this.initError) return this.initError.message;
+    if (this.charManager.getLoadError()) return this.charManager.getLoadError()!.message;
+    return null;
+  }
+
+  public isReady(): boolean {
+    return this.isWebGLSupported() && this.charManager.getIsReady();
   }
 
   public renderCampaign(campaign: ClientCampaignSync, localPlayerId: string): void {
@@ -137,7 +163,7 @@ export class ThreeGameRenderer {
     }
 
     // 3. Update & Animate 3D Human Characters
-    this.charManager.updatePlayers(campaign.players, dt);
+    this.charManager.updatePlayers(campaign.players, dt, campaign.teamRoster);
 
     // 4. Render 3D Scene
     this.renderer.render(this.scene, this.camera);

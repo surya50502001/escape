@@ -50,11 +50,32 @@ if (webglCanvas) {
 if (rendererToggleBtn) {
   const updateToggleBtnText = () => {
     if (activeRendererMode === '3d') {
-      rendererToggleBtn.textContent = '🎨 3D Realistic';
-      rendererToggleBtn.title = 'Switch to 2D Classic Canvas renderer';
-      rendererToggleBtn.style.background = '#0284c7';
-      rendererToggleBtn.style.borderColor = '#38bdf8';
-      if (webglCanvas) webglCanvas.style.display = 'block';
+      if (threeRenderer?.isAssetLoading()) {
+        rendererToggleBtn.textContent = '⏳ Loading 3D...';
+        rendererToggleBtn.title = 'Downloading 3D character assets... (Rendering in 2D mode until ready)';
+        rendererToggleBtn.style.background = '#0369a1';
+        rendererToggleBtn.style.borderColor = '#38bdf8';
+        if (webglCanvas) webglCanvas.style.display = 'none';
+      } else if (threeRenderer?.isReady()) {
+        rendererToggleBtn.textContent = '🎨 3D Realistic';
+        rendererToggleBtn.title = 'Switch to 2D Classic Canvas renderer';
+        rendererToggleBtn.style.background = '#0284c7';
+        rendererToggleBtn.style.borderColor = '#38bdf8';
+        if (webglCanvas) webglCanvas.style.display = 'block';
+      } else if (threeRenderer?.hasAssetError()) {
+        rendererToggleBtn.textContent = '⚠️ 2D (3D Failed)';
+        rendererToggleBtn.title = `3D assets failed to load: ${threeRenderer.getAssetErrorMessage() || 'Unknown error'}. 2D Classic mode active.`;
+        rendererToggleBtn.style.background = '#991b1b';
+        rendererToggleBtn.style.borderColor = '#ef4444';
+        if (webglCanvas) webglCanvas.style.display = 'none';
+        activeRendererMode = '2d';
+      } else {
+        rendererToggleBtn.textContent = '🎨 3D Realistic';
+        rendererToggleBtn.title = 'Switch to 2D Classic Canvas renderer';
+        rendererToggleBtn.style.background = '#0284c7';
+        rendererToggleBtn.style.borderColor = '#38bdf8';
+        if (webglCanvas) webglCanvas.style.display = 'block';
+      }
     } else {
       rendererToggleBtn.textContent = '📐 2D Classic';
       rendererToggleBtn.title = 'Switch to 3D Realistic (Three.js) renderer';
@@ -64,11 +85,27 @@ if (rendererToggleBtn) {
     }
   };
 
+  if (threeRenderer) {
+    threeRenderer.onStatusChange = () => {
+      updateToggleBtnText();
+    };
+  }
+
   rendererToggleBtn.addEventListener('click', () => {
-    if (!threeRenderer || !threeRenderer.isReady()) {
+    if (!threeRenderer || !threeRenderer.isWebGLSupported()) {
       alert('3D WebGL renderer is unavailable on this device. Using 2D Classic mode.');
       activeRendererMode = '2d';
       updateToggleBtnText();
+      return;
+    }
+    if (threeRenderer.hasAssetError()) {
+      alert(`3D character assets failed to load: ${threeRenderer.getAssetErrorMessage() || 'Unknown error'}. Using 2D Classic mode.`);
+      activeRendererMode = '2d';
+      updateToggleBtnText();
+      return;
+    }
+    if (threeRenderer.isAssetLoading()) {
+      alert('3D character assets are still loading. The view will automatically activate when ready.');
       return;
     }
     activeRendererMode = activeRendererMode === '3d' ? '2d' : '3d';
