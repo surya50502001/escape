@@ -3,6 +3,41 @@ import { ClientCampaignSync } from '../../server/campaign/campaignSession.js';
 import { CampaignItem } from '../../server/campaign/roomRuntime.js';
 
 /**
+ * Recursively disposes all geometries, materials, and textures within an Object3D hierarchy
+ * to prevent GPU/WebGL memory leaks during repeated room transitions or item pickups.
+ */
+export function disposeHierarchy(obj: THREE.Object3D): void {
+  obj.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (mesh.geometry) {
+      mesh.geometry.dispose();
+    }
+    if (mesh.material) {
+      if (Array.isArray(mesh.material)) {
+        for (const mat of mesh.material) {
+          disposeMaterial(mat);
+        }
+      } else {
+        disposeMaterial(mesh.material);
+      }
+    }
+    if ((child as any).dispose && typeof (child as any).dispose === 'function' && !mesh.geometry) {
+      (child as any).dispose();
+    }
+  });
+}
+
+export function disposeMaterial(mat: THREE.Material): void {
+  for (const key of Object.keys(mat)) {
+    const val = (mat as any)[key];
+    if (val && typeof val === 'object' && val.isTexture) {
+      val.dispose();
+    }
+  }
+  mat.dispose();
+}
+
+/**
  * Procedural 3D prison architecture and interactive mechanism renderer for all campaign rooms.
  * Dynamically renders:
  * - Authoritative room geometry (concrete walls, floors, catwalks, airlock doors, ladders)
@@ -69,12 +104,18 @@ export class CampaignRoomThreeEnvironment {
    * Build static room architecture from authoritative campaign geometry.
    */
   private buildStaticRoom(campaign: ClientCampaignSync): void {
-    // Clear previous static meshes
+    // 1. Recursively dispose all previous static meshes, geometries, materials, and textures
+    disposeHierarchy(this.staticGroup);
     while (this.staticGroup.children.length > 0) {
-      const child = this.staticGroup.children[0];
-      this.staticGroup.remove(child);
-      if ((child as any).geometry) (child as any).geometry.dispose();
+      this.staticGroup.remove(this.staticGroup.children[0]);
     }
+
+    // 2. Clean up dynamic ground items from previous room with full disposal
+    for (const grp of this.itemMeshes.values()) {
+      this.dynamicGroup.remove(grp);
+      disposeHierarchy(grp);
+    }
+    this.itemMeshes.clear();
 
     this.doorLights.clear();
     this.switchALight = null;
@@ -300,14 +341,15 @@ export class CampaignRoomThreeEnvironment {
 
     } else if (roomId === 4) {
       // Searchlight Spotlight fixture at top ceiling
-      const sSpot = new THREE.SpotLight(0xfef08a, 2.5, 750, Math.PI / 7, 0.45);
+      const sSpot = new THREE.SpotLight(0xfef08a, 2.5, 750, Math.PI / 8, 0.45);
       sSpot.position.set(160, -10, 50);
       sSpot.castShadow = true;
       this.staticGroup.add(sSpot);
+      this.staticGroup.add(sSpot.target);
       this.searchlightObj = sSpot;
 
-      // Volumetric beam cone
-      const coneGeo = new THREE.ConeGeometry(80, 540, 16, 1, true);
+      // Volumetric beam cone (matching ±40px detection radius at floor y=544)
+      const coneGeo = new THREE.ConeGeometry(45, 540, 16, 1, true);
       coneGeo.translate(0, -270, 0);
       const coneMat = new THREE.MeshBasicMaterial({
         color: 0xfef08a,
@@ -367,47 +409,53 @@ export class CampaignRoomThreeEnvironment {
       nPed.position.set(256, -(544 - 14), 0);
       this.staticGroup.add(nPed);
 
-      // Heavy Box C Safe at x=1168, y=512 (x: 1120..1216, y: 480..544)
+      // Heavy Box C Safe at x=1160, y=512 (matches authoritative interaction trigger)
       const boxMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.6, roughness: 0.4 });
       const boxC = new THREE.Mesh(new THREE.BoxGeometry(96, 64, 40), boxMat);
-      boxC.position.set(1168, -512, 0);
+      boxC.position.set(1160, -512, 0);
       this.staticGroup.add(boxC);
       this.boxCMesh = boxC;
 
     } else if (roomId === 10) {
       // Emergency Ladder Group (deployed on platform C to floor)
+      // Authoritative coordinates: x = 912, y = 192, width = 28, height = 352 (bottom at 544)
+      const ladObj = campaign.ladders.find(l => l.id === 'emergency_ladder');
+      const ladX = ladObj ? ladObj.x : 912;
+      const ladY = ladObj ? ladObj.y : 192;
+      const ladW = ladObj ? ladObj.width : 28;
+      const ladH = ladObj ? ladObj.height : 352;
+
       const ladGroup = new THREE.Group();
       const ladRailMat = new THREE.MeshStandardMaterial({ color: 0xeab308, metalness: 0.6 });
       const ladRungMat = new THREE.MeshStandardMaterial({ color: 0xfde047, metalness: 0.5 });
-      const ladH = 544 - 224; // 320 px
       const rL = new THREE.Mesh(new THREE.BoxGeometry(4, ladH, 8), ladRailMat);
-      rL.position.set(768 - 14, -(224 + ladH / 2), 0);
+      rL.position.set(ladX - ladW / 2 + 2, -(ladY + ladH / 2), 0);
       const rR = new THREE.Mesh(new THREE.BoxGeometry(4, ladH, 8), ladRailMat);
-      rR.position.set(768 + 14, -(224 + ladH / 2), 0);
+      rR.position.set(ladX + ladW / 2 - 2, -(ladY + ladH / 2), 0);
       ladGroup.add(rL); ladGroup.add(rR);
 
-      for (let ry = 224 + 16; ry < 544; ry += 20) {
-        const rung = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 24, 8), ladRungMat);
+      for (let ry = ladY + 16; ry < ladY + ladH; ry += 20) {
+        const rung = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, ladW - 4, 8), ladRungMat);
         rung.rotateZ(Math.PI / 2);
-        rung.position.set(768, -ry, 0);
+        rung.position.set(ladX, -ry, 0);
         ladGroup.add(rung);
       }
       ladGroup.visible = false;
       this.staticGroup.add(ladGroup);
       this.emergencyLadderGroup = ladGroup;
 
-      // Sealed Hatch Rebar Grid at x=1264, y=144 (x: 1216..1312, y: 96..192)
+      // Sealed Hatch Rebar Grid centered at x=1248, y=144 (matches authoritative hatch trigger)
       const rebarG = new THREE.Group();
       const rebarMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.8, roughness: 0.2 });
-      for (let bx = 1232; bx < 1312; bx += 24) {
-        const bar = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.5, 96, 8), rebarMat);
+      for (let bx = 1224; bx <= 1272; bx += 24) {
+        const bar = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.5, 64, 8), rebarMat);
         bar.position.set(bx, -144, 5);
         rebarG.add(bar);
       }
-      for (let by = 112; by < 192; by += 24) {
-        const bar = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.5, 96, 8), rebarMat);
+      for (let by = 124; by <= 164; by += 20) {
+        const bar = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.5, 64, 8), rebarMat);
         bar.rotateZ(Math.PI / 2);
-        bar.position.set(1264, -by, 5);
+        bar.position.set(1248, -by, 5);
         rebarG.add(bar);
       }
       this.staticGroup.add(rebarG);
@@ -415,16 +463,16 @@ export class CampaignRoomThreeEnvironment {
 
       // Surface Escape Breach Radiant Light
       const pMesh = new THREE.Mesh(
-        new THREE.PlaneGeometry(160, 160),
+        new THREE.PlaneGeometry(120, 120),
         new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.45, side: THREE.DoubleSide })
       );
-      pMesh.position.set(1264, -144, 2);
+      pMesh.position.set(1248, -144, 2);
       pMesh.visible = false;
       this.staticGroup.add(pMesh);
       this.hatchPortalMesh = pMesh;
 
       const pLight = new THREE.PointLight(0x38bdf8, 3.5, 450);
-      pLight.position.set(1264, -144, 30);
+      pLight.position.set(1248, -144, 30);
       pLight.visible = false;
       this.staticGroup.add(pLight);
       this.hatchPortalLight = pLight;
@@ -438,10 +486,11 @@ export class CampaignRoomThreeEnvironment {
   private updateGroundItems(items: CampaignItem[], now: number): void {
     const activeItemIds = new Set(items.map(it => it.id));
 
-    // Remove picked up items
+    // Remove picked up items with full GPU disposal
     for (const [id, grp] of this.itemMeshes.entries()) {
       if (!activeItemIds.has(id)) {
         this.dynamicGroup.remove(grp);
+        disposeHierarchy(grp);
         this.itemMeshes.delete(id);
       }
     }
@@ -621,6 +670,25 @@ export class CampaignRoomThreeEnvironment {
           this.hatchPortalLight.intensity = 2.5 + Math.sin(now * 0.008) * 0.8;
         }
       }
+    }
+  }
+
+  /**
+   * Complete GPU resource disposal for the 3D environment.
+   */
+  public dispose(): void {
+    disposeHierarchy(this.staticGroup);
+    while (this.staticGroup.children.length > 0) {
+      this.staticGroup.remove(this.staticGroup.children[0]);
+    }
+    for (const grp of this.itemMeshes.values()) {
+      this.dynamicGroup.remove(grp);
+      disposeHierarchy(grp);
+    }
+    this.itemMeshes.clear();
+    disposeHierarchy(this.dynamicGroup);
+    while (this.dynamicGroup.children.length > 0) {
+      this.dynamicGroup.remove(this.dynamicGroup.children[0]);
     }
   }
 }

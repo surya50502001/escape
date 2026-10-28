@@ -122,10 +122,10 @@ export class CharacterModelManager {
 
     const activeIds = new Set(players.map(p => p.id));
 
-    // Remove disconnected players
+    // Remove disconnected players with GPU material cleanup
     for (const [id, inst] of this.playerInstances.entries()) {
       if (!activeIds.has(id)) {
-        this.scene.remove(inst.root);
+        this.disposePlayerInstance(inst);
         this.playerInstances.delete(id);
       }
     }
@@ -402,11 +402,30 @@ export class CharacterModelManager {
   }
 
   public cleanup(): void {
-    if (this.scene) {
-      for (const inst of this.playerInstances.values()) {
-        this.scene.remove(inst.root);
-      }
+    for (const inst of this.playerInstances.values()) {
+      this.disposePlayerInstance(inst);
     }
     this.playerInstances.clear();
+  }
+
+  private disposePlayerInstance(inst: Player3DInstance): void {
+    if (this.scene) {
+      this.scene.remove(inst.root);
+    }
+    inst.mixer.stopAllAction();
+    inst.root.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        const mesh = child as THREE.Mesh;
+        if (mesh.material) {
+          if (Array.isArray(mesh.material)) {
+            for (const mat of mesh.material) {
+              mat.dispose();
+            }
+          } else {
+            mesh.material.dispose();
+          }
+        }
+      }
+    });
   }
 }

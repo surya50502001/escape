@@ -198,4 +198,14 @@ export class ThreeGameRenderer {
   public getCameraY(): number {
     return this.cameraY - this.height / 2;
   }
+
+  public dispose(): void {
+    this.roomEnv.dispose();
+    this.charManager.cleanup();
+    if (this.renderer) {
+      this.renderer.dispose();
+      this.renderer = null;
+    }
+    ThreeGameRenderer.instance = null;
+  }
 }

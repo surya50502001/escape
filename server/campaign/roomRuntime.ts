@@ -45,6 +45,8 @@ export function pointInRect(px: number, py: number, r: { x: number; y: number; w
 /**
  * RoomRuntime encapsulates physics, players, and local items for one active campaign room.
  */
+export const ITEM_PICKUP_RADIUS = 64;
+
 export class RoomRuntime {
   public roomId: number;
   public loadedRoom: LoadedRoom;
@@ -319,14 +321,13 @@ export class RoomRuntime {
   }
 
   /**
-   * Authoritative item pickup within pickup radius (64 px).
+   * Authoritative item pickup within shared pickup radius (ITEM_PICKUP_RADIUS = 64 px).
    */
   public pickupGroundItem(player: Player, itemId?: string): CampaignItem | null {
-    const PICKUP_RADIUS = 64;
     for (const [id, item] of this.groundItems.entries()) {
       if (itemId && id !== itemId) continue;
       const dist = Math.hypot(player.x - item.x, player.y - item.y);
-      if (dist <= PICKUP_RADIUS && item.carriedByPlayerId === null) {
+      if (dist <= ITEM_PICKUP_RADIUS && item.carriedByPlayerId === null) {
         this.groundItems.delete(id);
         item.carriedByPlayerId = player.id;
         return item;
@@ -470,9 +471,14 @@ export class RoomRuntime {
    * Helper to get human-readable prompt string for HUD.
    */
   public getPrompt(player: Player, carriedItem?: CampaignItem): string | null {
+    // In Room 9, locked Box C container prompt takes precedence over its internal item
+    if (this.roomId === 9 && Math.hypot(player.x - 1160, player.y - 512) < 60 && !this.isContainerUnlocked('box_c')) {
+      return carriedItem?.type === 'key' ? '[E] Unlock Box C' : '[LOCKED] Requires Brass Key';
+    }
+
     // Check ground items
     for (const item of this.groundItems.values()) {
-      if (Math.hypot(player.x - item.x, player.y - item.y) <= 48) {
+      if (Math.hypot(player.x - item.x, player.y - item.y) <= ITEM_PICKUP_RADIUS) {
         return `[E] Pick up ${item.type.replace('_', ' ').toUpperCase()}`;
       }
     }

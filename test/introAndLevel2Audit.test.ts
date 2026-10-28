@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { IntroSequence } from '../server/campaign/introSequence.js';
 import { CampaignSession } from '../server/campaign/campaignSession.js';
 import { Player } from '../server/types.js';
+import { ITEM_PICKUP_RADIUS } from '../server/campaign/roomRuntime.js';
+import { CampaignRoomThreeEnvironment, disposeHierarchy } from '../src/graphics3d/campaignRoomThree.js';
 
 describe('Audit Verification: Intro Sequence, Input Freedom & Level 2 Continuity', () => {
   it('INTRO-01: intro advances through ARRIVE -> LOCK -> STEAL -> SIGNAL -> PLAY', () => {
@@ -309,5 +311,267 @@ describe('Audit Verification: Intro Sequence, Input Freedom & Level 2 Continuity
     session.addPlayer(p2, 7);
     const syncR7 = session.getClientSync(p2.id)!;
     assert.ok(typeof syncR7.puzzleState.guardX === 'number', 'Room 7 must transmit guardX');
+  });
+
+  it('AUDIT-FIX-01: Room 10 ladder coordinates match authoritative server placement at x=912, y=192', () => {
+    const session = new CampaignSession();
+    const p1: Player = {
+      id: 'p_r10_lad',
+      name: 'R10Climber',
+      isBot: false,
+      x: 100,
+      y: 544,
+      vx: 0,
+      vy: 0,
+      facing: 'RIGHT',
+      angle: 0,
+      color: '#38bdf8',
+      health: 100,
+      stamina: 100,
+      state: 'ON_FLOOR',
+      isGrounded: true,
+      stunnedTimer: 0,
+      tackleCooldown: 0,
+      attackCooldown: 0,
+      rocks: 0,
+      hasEscaped: false,
+      sabotages: 0,
+      climbKickTimer: 0,
+      climbAttackCooldown: 0,
+      climbGrabbingId: null,
+      grabbedByPlayerId: null,
+      struggleMeter: 0,
+      hazardCooldown: 0,
+      carryingLadderId: null
+    };
+
+    session.addPlayer(p1, 10);
+    const room10 = session.getOrCreateRoomRuntime(10);
+    room10.deployEmergencyLadder();
+
+    const ladder = room10.engine.state.ladders.find(l => l.id === 'emergency_ladder');
+    assert.ok(ladder, 'Room 10 must have emergency_ladder');
+    assert.equal(ladder.x, 912, 'Emergency ladder authoritative X must be 912');
+    assert.equal(ladder.y, 192, 'Emergency ladder authoritative Y must be 192');
+    assert.equal(ladder.height, 352, 'Emergency ladder authoritative height must be 352');
+    assert.equal(ladder.isPlaced, true, 'Emergency ladder must be placed once deployed');
+
+    // Verify 3D environment builds emergency ladder at authoritative x=912
+    const sync = session.getClientSync(p1.id)!;
+    const env = new CampaignRoomThreeEnvironment();
+    env.update(sync);
+    const ladderGroup = (env as any).emergencyLadderGroup;
+    assert.ok(ladderGroup, '3D environment must build emergencyLadderGroup in Room 10');
+    assert.equal(ladderGroup.visible, true, 'Emergency ladder must be visible once deployed');
+    // Check rung X position
+    const firstRung = ladderGroup.children.find((c: any) => c.geometry && c.geometry.type === 'CylinderGeometry');
+    assert.ok(firstRung, 'Must contain ladder rung');
+    assert.equal(firstRung.position.x, 912, 'Ladder rung visual X must match authoritative 912');
+    env.dispose();
+  });
+
+  it('AUDIT-FIX-02: pickup prompt and pickup range agree at shared ITEM_PICKUP_RADIUS=64', () => {
+    assert.equal(ITEM_PICKUP_RADIUS, 64, 'Shared ITEM_PICKUP_RADIUS must be 64 px');
+
+    const session = new CampaignSession();
+    const p1: Player = {
+      id: 'p_dist_test',
+      name: 'Ranger',
+      isBot: false,
+      x: 256,
+      y: 544,
+      vx: 0,
+      vy: 0,
+      facing: 'RIGHT',
+      angle: 0,
+      color: '#86efac',
+      health: 100,
+      stamina: 100,
+      state: 'ON_FLOOR',
+      isGrounded: true,
+      stunnedTimer: 0,
+      tackleCooldown: 0,
+      attackCooldown: 0,
+      rocks: 0,
+      hasEscaped: false,
+      sabotages: 0,
+      climbKickTimer: 0,
+      climbAttackCooldown: 0,
+      climbGrabbingId: null,
+      grabbedByPlayerId: null,
+      struggleMeter: 0,
+      hazardCooldown: 0,
+      carryingLadderId: null
+    };
+
+    session.addPlayer(p1, 9);
+    const room9 = session.getOrCreateRoomRuntime(9);
+    const item = room9.groundItems.get('brass_key');
+    assert.ok(item, 'brass_key exists in Room 9');
+
+    // Test Case A: At distance 56 px (between old 48 px prompt threshold and 64 px pickup radius)
+    // Both prompt AND pickup must succeed!
+    p1.x = item.x + 56;
+    p1.y = item.y;
+    assert.ok(room9.getPrompt(p1)?.includes('Pick up'), 'At 56 px prompt must display pick up');
+    const picked = room9.pickupGroundItem(p1);
+    assert.ok(picked !== null, 'At 56 px pickupGroundItem must succeed');
+    assert.equal(picked?.id, 'brass_key');
+
+    // Drop it back
+    room9.dropItem(picked!, item.x, item.y);
+
+    // Test Case B: At distance 70 px (> 64 px radius)
+    // Neither prompt NOR pickup should trigger
+    p1.x = item.x + 70;
+    p1.y = item.y;
+    assert.ok(!room9.getPrompt(p1)?.includes('Pick up'), 'At 70 px prompt must NOT display pick up');
+    assert.equal(room9.pickupGroundItem(p1), null, 'At 70 px pickupGroundItem must fail');
+  });
+
+  it('AUDIT-FIX-03: Three.js CampaignRoomThreeEnvironment disposes GPU resources on room changes and cleanup', () => {
+    const session = new CampaignSession();
+    const p1: Player = {
+      id: 'p_gpu_test',
+      name: 'GPUGuard',
+      isBot: false,
+      x: 100,
+      y: 544,
+      vx: 0,
+      vy: 0,
+      facing: 'RIGHT',
+      angle: 0,
+      color: '#38bdf8',
+      health: 100,
+      stamina: 100,
+      state: 'ON_FLOOR',
+      isGrounded: true,
+      stunnedTimer: 0,
+      tackleCooldown: 0,
+      attackCooldown: 0,
+      rocks: 0,
+      hasEscaped: false,
+      sabotages: 0,
+      climbKickTimer: 0,
+      climbAttackCooldown: 0,
+      climbGrabbingId: null,
+      grabbedByPlayerId: null,
+      struggleMeter: 0,
+      hazardCooldown: 0,
+      carryingLadderId: null
+    };
+
+    session.addPlayer(p1, 1);
+    const sync1 = session.getClientSync(p1.id)!;
+    const env = new CampaignRoomThreeEnvironment();
+
+    // Render Room 1
+    env.update(sync1);
+    const staticCount1 = (env as any).staticGroup.children.length;
+    assert.ok(staticCount1 > 0, 'Room 1 has static geometry');
+
+    // Transition to Room 9 (with ground item brass_key)
+    const session9 = new CampaignSession();
+    const p9: Player = { ...p1, id: 'p_gpu_r9' };
+    session9.addPlayer(p9, 9);
+    p9.x = 256;
+    p9.y = 544;
+    const sync9 = session9.getClientSync(p9.id)!;
+    env.update(sync9);
+    const itemMeshes = (env as any).itemMeshes as Map<string, any>;
+    assert.ok(itemMeshes.has('brass_key'), 'Room 9 itemMesh created for brass_key');
+
+    // Pick up brass_key: item disappears from ground items
+    session9.handleInput(p9.id, {
+      up: false, down: false, left: false, right: false,
+      jump: false, interact: true, tackle: false, pull: false, struggle: false, angle: 0
+    });
+    const sync9After = session9.getClientSync(p9.id)!;
+    env.update(sync9After);
+    assert.ok(!itemMeshes.has('brass_key'), 'Picked up item mesh disposed and removed from cache');
+
+    // Transition to Room 10: static meshes refreshed and old items disposed
+    const session10 = new CampaignSession();
+    const p10: Player = { ...p1, id: 'p_gpu_r10' };
+    session10.addPlayer(p10, 10);
+    const sync10 = session10.getClientSync(p10.id)!;
+    env.update(sync10);
+    assert.equal(itemMeshes.size, 0, 'Dynamic item meshes cleared on room transition');
+
+    // Call full dispose
+    env.dispose();
+    assert.equal((env as any).staticGroup.children.length, 0, 'staticGroup emptied on dispose');
+    assert.equal((env as any).dynamicGroup.children.length, 0, 'dynamicGroup emptied on dispose');
+  });
+
+  it('AUDIT-FIX-04: Puzzle mechanism visual coordinates align with server triggers and collision zones', () => {
+    const createBasePlayer = (id: string): Player => ({
+      id,
+      name: 'Surveyor',
+      isBot: false,
+      x: 100,
+      y: 544,
+      vx: 0,
+      vy: 0,
+      facing: 'RIGHT',
+      angle: 0,
+      color: '#38bdf8',
+      health: 100,
+      stamina: 100,
+      state: 'ON_FLOOR',
+      isGrounded: true,
+      stunnedTimer: 0,
+      tackleCooldown: 0,
+      attackCooldown: 0,
+      rocks: 0,
+      hasEscaped: false,
+      sabotages: 0,
+      climbKickTimer: 0,
+      climbAttackCooldown: 0,
+      climbGrabbingId: null,
+      grabbedByPlayerId: null,
+      struggleMeter: 0,
+      hazardCooldown: 0,
+      carryingLadderId: null
+    });
+
+    // 1. Room 1 Rope Anchor trigger at (992, 384)
+    const session1 = new CampaignSession();
+    const p1 = createBasePlayer('p_mech_1');
+    session1.addPlayer(p1, 1);
+    const r1 = session1.getOrCreateRoomRuntime(1);
+    p1.x = 992;
+    p1.y = 384;
+    assert.equal(r1.getPrompt(p1), '[E] Deploy Rope to Floor');
+
+    // 2. Room 8 Switches at (384, 544) and (1152, 544)
+    const session8 = new CampaignSession();
+    const p8 = createBasePlayer('p_mech_8');
+    session8.addPlayer(p8, 8);
+    const r8 = session8.getOrCreateRoomRuntime(8);
+    p8.x = 384;
+    p8.y = 544;
+    assert.equal(r8.getPrompt(p8), '[E] Activate Switch A');
+    p8.x = 1152;
+    p8.y = 544;
+    assert.equal(r8.getPrompt(p8), '[E] Activate Switch B');
+
+    // 3. Room 9 Box C at (1160, 512)
+    const session9 = new CampaignSession();
+    const p9 = createBasePlayer('p_mech_9');
+    session9.addPlayer(p9, 9);
+    const r9 = session9.getOrCreateRoomRuntime(9);
+    p9.x = 1160;
+    p9.y = 512;
+    assert.equal(r9.getPrompt(p9), '[LOCKED] Requires Brass Key');
+
+    // 4. Room 10 Sealed Hatch at (1248, 144)
+    const session10 = new CampaignSession();
+    const p10 = createBasePlayer('p_mech_10');
+    session10.addPlayer(p10, 10);
+    const r10 = session10.getOrCreateRoomRuntime(10);
+    p10.x = 1248;
+    p10.y = 144;
+    assert.equal(r10.getPrompt(p10), '[SEALED] Requires Cutting Tool');
   });
 });
