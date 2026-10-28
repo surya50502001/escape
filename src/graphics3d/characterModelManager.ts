@@ -14,6 +14,7 @@ export interface Player3DInstance {
   targetX: number;
   targetY: number;
   paletteIndex: number;
+  ownedMaterials: THREE.Material[];
 }
 
 export interface UniformPalette {
@@ -141,16 +142,22 @@ export class CharacterModelManager {
         continue;
       }
 
+      let inst = this.playerInstances.get(p.id);
+
       let rosterIdx = -1;
       if (teamRoster && Array.isArray(teamRoster)) {
         rosterIdx = teamRoster.findIndex(m => m.id === p.id);
       }
-      if (rosterIdx < 0) {
-        rosterIdx = i;
-      }
-      const paletteIndex = CharacterModelManager.resolvePaletteIndex(p, rosterIdx);
 
-      let inst = this.playerInstances.get(p.id);
+      let paletteIndex: number;
+      if (rosterIdx >= 0) {
+        paletteIndex = CharacterModelManager.resolvePaletteIndex(p, rosterIdx);
+      } else if (inst) {
+        paletteIndex = inst.paletteIndex;
+      } else {
+        paletteIndex = CharacterModelManager.resolvePaletteIndex(p, -1);
+      }
+
       if (!inst) {
         const created = this.createPlayerInstance(p, paletteIndex);
         if (created) {
@@ -204,6 +211,7 @@ export class CharacterModelManager {
 
       // Enable real-time shadow casting and receiving on all skinned meshes
       const palette = UNIFORM_PALETTES[paletteIndex % UNIFORM_PALETTES.length];
+      const ownedMaterials: THREE.Material[] = [];
 
       clonedScene.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
@@ -211,26 +219,38 @@ export class CharacterModelManager {
           mesh.castShadow = true;
           mesh.receiveShadow = true;
 
+          // Explicitly clone all materials to guarantee independent ownership per instance
+          // and prevent accidental disposal or mutation of base glTF or remaining player materials.
+          if (mesh.material) {
+            if (Array.isArray(mesh.material)) {
+              mesh.material = mesh.material.map((origMat) => {
+                const cloned = origMat.clone();
+                ownedMaterials.push(cloned);
+                return cloned;
+              });
+            } else {
+              const cloned = mesh.material.clone();
+              ownedMaterials.push(cloned);
+              mesh.material = cloned;
+            }
+          }
+
           // Material configuration for distinct team uniforms and glossy visor
-          if (mesh.name === 'vanguard_Mesh' && mesh.material) {
-            const origMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
-            const newMat = origMat.clone() as THREE.MeshStandardMaterial;
-            if (newMat.color) {
-              newMat.color.setHex(palette.bodyColor);
+          if (mesh.name === 'vanguard_Mesh') {
+            const mat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.MeshStandardMaterial;
+            if (mat && mat.color) {
+              mat.color.setHex(palette.bodyColor);
             }
-            if (newMat.emissive) {
-              newMat.emissive.setHex(palette.emissive);
+            if (mat && mat.emissive) {
+              mat.emissive.setHex(palette.emissive);
             }
-            newMat.roughness = 0.65;
-            newMat.metalness = 0.15;
-            mesh.material = newMat;
-          } else if (mesh.name === 'vanguard_visor' && mesh.material) {
-            const origMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
-            const visorMat = origMat.clone() as THREE.MeshStandardMaterial;
+            mat.roughness = 0.65;
+            mat.metalness = 0.15;
+          } else if (mesh.name === 'vanguard_visor') {
+            const visorMat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.MeshStandardMaterial;
             visorMat.color.setHex(0x334155);
             visorMat.roughness = 0.2;
             visorMat.metalness = 0.85;
-            mesh.material = visorMat;
           }
         }
       });
@@ -264,7 +284,8 @@ export class CharacterModelManager {
         visualY: p.y,
         targetX: p.x,
         targetY: p.y,
-        paletteIndex
+        paletteIndex,
+        ownedMaterials
       };
     } catch (err) {
       console.error('[Three.js 2.5D] Error creating 3D character instance:', err);
@@ -413,19 +434,13 @@ export class CharacterModelManager {
       this.scene.remove(inst.root);
     }
     inst.mixer.stopAllAction();
-    inst.root.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        const mesh = child as THREE.Mesh;
-        if (mesh.material) {
-          if (Array.isArray(mesh.material)) {
-            for (const mat of mesh.material) {
-              mat.dispose();
-            }
-          } else {
-            mesh.material.dispose();
-          }
-        }
-      }
-    });
+    inst.mixer.uncacheRoot(inst.root);
+
+    // Dispose strictly and exclusively the materials owned by this player instance.
+    // Base glTF materials and other remaining players' materials are completely preserved.
+    for (const mat of inst.ownedMaterials) {
+      mat.dispose();
+    }
+    inst.ownedMaterials = [];
   }
 }

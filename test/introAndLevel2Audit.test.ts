@@ -1,10 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as THREE from 'three';
 import { IntroSequence } from '../server/campaign/introSequence.js';
 import { CampaignSession } from '../server/campaign/campaignSession.js';
 import { Player } from '../server/types.js';
 import { ITEM_PICKUP_RADIUS } from '../server/campaign/roomRuntime.js';
 import { CampaignRoomThreeEnvironment, disposeHierarchy } from '../src/graphics3d/campaignRoomThree.js';
+import { CharacterModelManager, UNIFORM_PALETTES } from '../src/graphics3d/characterModelManager.js';
 
 describe('Audit Verification: Intro Sequence, Input Freedom & Level 2 Continuity', () => {
   it('INTRO-01: intro advances through ARRIVE -> LOCK -> STEAL -> SIGNAL -> PLAY', () => {
@@ -573,5 +575,133 @@ describe('Audit Verification: Intro Sequence, Input Freedom & Level 2 Continuity
     p10.x = 1248;
     p10.y = 144;
     assert.equal(r10.getPrompt(p10), '[SEALED] Requires Cutting Tool');
+  });
+
+  it('AUDIT-FIX-05: disconnecting one player does not dispose shared/base materials or alter remaining players appearance', () => {
+    const manager = new CharacterModelManager();
+    const scene = new THREE.Scene();
+    manager.scene = scene;
+
+    // Create a base glTF scene mock with base materials
+    const baseScene = new THREE.Group();
+    const baseMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+    let baseMatDisposed = false;
+    baseMat.dispose = () => { baseMatDisposed = true; };
+
+    const baseMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), baseMat);
+    baseMesh.name = 'vanguard_Mesh';
+    baseScene.add(baseMesh);
+
+    const baseVisorMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
+    let baseVisorMatDisposed = false;
+    baseVisorMat.dispose = () => { baseVisorMatDisposed = true; };
+
+    const baseVisorMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), baseVisorMat);
+    baseVisorMesh.name = 'vanguard_visor';
+    baseScene.add(baseVisorMesh);
+
+    manager.baseGltf = { scene: baseScene, animations: [] };
+    manager.isLoaded = true;
+
+    const p1: Player = {
+      id: 'player_host',
+      name: 'HostPlayer',
+      isBot: false,
+      x: 100,
+      y: 544,
+      vx: 0,
+      vy: 0,
+      facing: 'RIGHT',
+      angle: 0,
+      color: '#38bdf8',
+      health: 100,
+      stamina: 100,
+      state: 'ON_FLOOR',
+      isGrounded: true,
+      stunnedTimer: 0,
+      tackleCooldown: 0,
+      attackCooldown: 0,
+      rocks: 0,
+      hasEscaped: false,
+      sabotages: 0,
+      climbKickTimer: 0,
+      climbAttackCooldown: 0,
+      climbGrabbingId: null,
+      grabbedByPlayerId: null,
+      struggleMeter: 0,
+      hazardCooldown: 0,
+      carryingLadderId: null
+    };
+
+    const p2: Player = {
+      ...p1,
+      id: 'player_partner',
+      name: 'PartnerPlayer',
+      x: 200
+    };
+
+    const teamRoster = [
+      { id: 'player_host', name: 'HostPlayer' },
+      { id: 'player_partner', name: 'PartnerPlayer' }
+    ];
+
+    // Spawn both players with team roster
+    manager.updatePlayers([p1, p2], 0.016, teamRoster);
+    assert.equal(manager.playerInstances.size, 2);
+
+    const inst1 = manager.playerInstances.get('player_host')!;
+    const inst2 = manager.playerInstances.get('player_partner')!;
+    assert.ok(inst1 && inst2);
+
+    // Each player instance must own its own isolated cloned materials
+    assert.notEqual(inst1.ownedMaterials[0], inst2.ownedMaterials[0]);
+    assert.notEqual(inst1.ownedMaterials[0], baseMat);
+    assert.notEqual(inst2.ownedMaterials[0], baseMat);
+
+    // Track disposal of player 1 and player 2 materials
+    let p1MatDisposed = false;
+    let p2MatDisposed = false;
+    inst1.ownedMaterials.forEach(m => {
+      const origDisp = m.dispose.bind(m);
+      m.dispose = () => { p1MatDisposed = true; origDisp(); };
+    });
+    inst2.ownedMaterials.forEach(m => {
+      const origDisp = m.dispose.bind(m);
+      m.dispose = () => { p2MatDisposed = true; origDisp(); };
+    });
+
+    // Check Player 2's starting appearance (Hazard Orange palette for partner index 1)
+    const p2Palette = UNIFORM_PALETTES[1];
+    let p2MeshMat: THREE.MeshStandardMaterial | null = null;
+    inst2.root.traverse((c) => {
+      if ((c as THREE.Mesh).isMesh && c.name === 'vanguard_Mesh') {
+        p2MeshMat = (c as THREE.Mesh).material as THREE.MeshStandardMaterial;
+      }
+    });
+    assert.ok(p2MeshMat);
+    assert.equal(p2MeshMat.color.getHex(), p2Palette.bodyColor);
+
+    // Disconnect player 1: update with only [p2] (with teamRoster)
+    manager.updatePlayers([p2], 0.016, teamRoster);
+
+    // Assertions:
+    // 1. Player 1 instance was removed and its owned materials disposed
+    assert.equal(manager.playerInstances.has('player_host'), false);
+    assert.equal(p1MatDisposed, true, 'Player 1 owned materials must be disposed');
+
+    // 2. Base glTF materials were NOT disposed
+    assert.equal(baseMatDisposed, false, 'Base glTF materials must remain intact and NOT disposed');
+    assert.equal(baseVisorMatDisposed, false, 'Base glTF visor material must remain intact');
+
+    // 3. Player 2 materials were NOT disposed
+    assert.equal(p2MatDisposed, false, 'Remaining player 2 materials must NOT be disposed');
+
+    // 4. Player 2 appearance (color, uniform palette) is completely intact
+    assert.equal(p2MeshMat.color.getHex(), p2Palette.bodyColor, 'Player 2 uniform color remains intact');
+    assert.equal(manager.playerInstances.has('player_partner'), true);
+
+    // 5. Subsequent update even without teamRoster preserves player 2's palette
+    manager.updatePlayers([p2], 0.016);
+    assert.equal(p2MeshMat.color.getHex(), p2Palette.bodyColor, 'Player 2 uniform color preserved without roster');
   });
 });
