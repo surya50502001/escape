@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { Player, ClientInput, Ladder, WallRect } from '../types.js';
+import { Player, ClientInput, Ladder, WallRect, SoundEvent } from '../types.js';
 import { CampaignProjectSpec, TransitionNetworkEdge } from './types.js';
 import { loadCampaignSpec, loadRoomFromSpec, DoorTrigger, SafeZone } from './roomLoader.js';
 import { RoomRuntime, RoomPersistentState, CampaignItem, InteractionResult } from './roomRuntime.js';
@@ -9,6 +9,14 @@ export interface CampaignPlayerSession {
   playerId: string;
   name: string;
   resumeToken: string;
+  lastRoomId?: number;
+  disconnectTime?: number | null;
+}
+
+export interface AirlockEvacuation {
+  sourceRoomId: number;
+  targetRoomId: number;
+  remainingSeconds: number;
 }
 
 export interface ClientCampaignSync {
@@ -39,6 +47,8 @@ export interface ClientCampaignSync {
   interactionPrompt: string | null;
   teamRoster: Array<{ id: string; name: string; roomId: number }>;
   intro: IntroSequenceState | null;
+  evacuationWarning?: AirlockEvacuation | null;
+  soundEvents?: SoundEvent[];
 }
 
 /**
@@ -61,6 +71,7 @@ export class CampaignSession {
   public lastInteractPressed: Map<string, boolean> = new Map();
   public campaignComplete: boolean = false;
   public intro: IntroSequence = new IntroSequence();
+  public evacuationTimers: Map<number, AirlockEvacuation> = new Map();
 
   constructor(id?: string, spec?: CampaignProjectSpec) {
     this.id = id || `CAMP-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
@@ -249,6 +260,24 @@ export class CampaignSession {
     this.playerRoomMap.set(playerId, targetRoomId);
     targetRoom.addPlayer(player);
 
+    // Forward progression airlock evacuation:
+    // "15-second airlock evacuation warning auto-evacuates delayed, downed, or disconnected
+    // players into the safe staging zone of the new room without bypassing puzzle triggers.
+    // The 15-second airlock applies to forward progression only."
+    const isForward = targetRoomId > currentRoomId;
+    if (isForward) {
+      const remainingInSource = Array.from(this.playerRoomMap.entries())
+        .some(([pId, rId]) => pId !== playerId && rId === currentRoomId);
+
+      if (remainingInSource && !this.evacuationTimers.has(currentRoomId)) {
+        this.evacuationTimers.set(currentRoomId, {
+          sourceRoomId: currentRoomId,
+          targetRoomId,
+          remainingSeconds: 15.0
+        });
+      }
+    }
+
     return true;
   }
 
@@ -338,6 +367,14 @@ export class CampaignSession {
   public handlePlayerDisconnect(playerId: string): void {
     const item = this.playerItems.get(playerId);
     const room = this.getPlayerRoom(playerId);
+    const roomId = this.playerRoomMap.get(playerId);
+
+    // Save player's last active room to allow seamless reconnection back to teammates
+    const session = this.playerSessions.get(playerId);
+    if (session && roomId !== undefined) {
+      session.lastRoomId = roomId;
+      session.disconnectTime = Date.now();
+    }
 
     if (item && room) {
       const player = room.getPlayer(playerId);
@@ -347,9 +384,8 @@ export class CampaignSession {
       room.dropItem(item, dropX, dropY);
     }
 
-    if (room) {
+    if (room && roomId !== undefined) {
       room.removePlayer(playerId);
-      const roomId = this.playerRoomMap.get(playerId)!;
       this.persistentStates.set(roomId, room.capturePersistentState());
     }
 
@@ -358,11 +394,71 @@ export class CampaignSession {
   }
 
   /**
-   * Advance physics in all active rooms.
+   * Advance physics in all active rooms and process 15s forward airlock evacuations.
    */
   public update(): void {
     const DT = 1 / 30;
     this.intro.update(DT);
+
+    // Process active 15s forward airlock evacuations
+    for (const [sourceRoomId, evac] of this.evacuationTimers.entries()) {
+      const trailingIds = Array.from(this.playerRoomMap.entries())
+        .filter(([_, rId]) => rId === sourceRoomId)
+        .map(([pId, _]) => pId);
+
+      if (trailingIds.length === 0) {
+        this.evacuationTimers.delete(sourceRoomId);
+        continue;
+      }
+
+      evac.remainingSeconds -= DT;
+      if (evac.remainingSeconds <= 0) {
+        // Evacuation deadline reached: auto-evacuate delayed/downed players into target room safe staging area
+        const targetRoom = this.getOrCreateRoomRuntime(evac.targetRoomId);
+        const sourceRoom = this.activeRooms.get(sourceRoomId);
+
+        for (const trailingId of trailingIds) {
+          const player = this.players.get(trailingId);
+          if (player && sourceRoom) {
+            sourceRoom.removePlayer(trailingId);
+
+            if (targetRoom.loadedRoom.safeZones.length > 0) {
+              const sp = targetRoom.loadedRoom.safeZones[0].spawnPoint;
+              player.x = sp.x;
+              player.y = sp.y;
+            } else {
+              player.x = 100;
+              player.y = targetRoom.loadedRoom.floorYPx;
+            }
+
+            player.vx = 0;
+            player.vy = 0;
+            player.isGrounded = true;
+            player.state = 'ON_FLOOR';
+            player.stunnedTimer = 0;
+            player.tackleCooldown = 0;
+            player.attackCooldown = 0;
+            player.health = Math.max(50, player.health);
+
+            const carried = this.playerItems.get(trailingId);
+            if (carried) {
+              carried.roomId = evac.targetRoomId;
+              carried.x = player.x;
+              carried.y = player.y;
+            }
+
+            this.playerRoomMap.set(trailingId, evac.targetRoomId);
+            targetRoom.addPlayer(player);
+          }
+        }
+
+        if (sourceRoom) {
+          this.persistentStates.set(sourceRoomId, sourceRoom.capturePersistentState());
+        }
+        this.evacuationTimers.delete(sourceRoomId);
+      }
+    }
+
     for (const room of this.activeRooms.values()) {
       room.update();
     }
@@ -487,6 +583,13 @@ export class CampaignSession {
       });
     }
 
+    const activeEvac = this.evacuationTimers.get(room.roomId);
+    const evacuationWarning = activeEvac ? {
+      sourceRoomId: activeEvac.sourceRoomId,
+      targetRoomId: activeEvac.targetRoomId,
+      remainingSeconds: Math.ceil(activeEvac.remainingSeconds)
+    } : null;
+
     return {
       mode: 'campaign',
       sessionCode: this.id,
@@ -514,7 +617,9 @@ export class CampaignSession {
       },
       interactionPrompt: player ? room.getPrompt(player, carried || undefined) : null,
       teamRoster,
-      intro: (this.intro.hasStarted() && !this.intro.isComplete()) ? { ...this.intro.state } : null
+      intro: (this.intro.hasStarted() && !this.intro.isComplete()) ? { ...this.intro.state } : null,
+      evacuationWarning,
+      soundEvents: room.engine.state.soundEvents || []
     };
   }
 }

@@ -70,6 +70,8 @@ export class CampaignRoomThreeEnvironment {
   private hatchPortalMesh: THREE.Mesh | null = null;
   private hatchPortalLight: THREE.PointLight | null = null;
   private boxCMesh: THREE.Mesh | null = null;
+  private room5PanelMesh: THREE.Mesh | null = null;
+  private room6RopeMesh: THREE.Mesh | null = null;
 
   constructor() {
     this.group = new THREE.Group();
@@ -131,6 +133,8 @@ export class CampaignRoomThreeEnvironment {
     this.hatchPortalMesh = null;
     this.hatchPortalLight = null;
     this.boxCMesh = null;
+    this.room5PanelMesh = null;
+    this.room6RopeMesh = null;
 
     const roomW = campaign.roomWidth || 1600;
     const roomH = campaign.roomHeight || 640;
@@ -241,7 +245,7 @@ export class CampaignRoomThreeEnvironment {
         // Special mechanism: built dynamically below
         continue;
       }
-      if (lad.id === 'cell_rope') {
+      if (lad.id === 'cell_rope' || lad.id === 'shaft_rope') {
         continue; // Handled as rope mechanism
       }
 
@@ -361,6 +365,31 @@ export class CampaignRoomThreeEnvironment {
       cone.position.set(160, 0, 0);
       this.staticGroup.add(cone);
       this.searchlightBeam = cone;
+
+    } else if (roomId === 5) {
+      // Secret movable panel at x=832, y=512
+      const panelMat = new THREE.MeshStandardMaterial({ color: 0x2b3748, metalness: 0.3, roughness: 0.8 });
+      const panelMesh = new THREE.Mesh(new THREE.BoxGeometry(48, 64, 40), panelMat);
+      panelMesh.position.set(832, -512, 0);
+      this.staticGroup.add(panelMesh);
+      this.room5PanelMesh = panelMesh;
+
+    } else if (roomId === 6) {
+      // Room 6 Shaft Rope (spans y: 160..512 at x=608)
+      const ropeH = 512 - 160;
+      const ropeGeo = new THREE.CylinderGeometry(3.0, 3.0, ropeH, 10);
+      const ropeMat = new THREE.MeshStandardMaterial({ color: 0xc2824e, roughness: 0.9 });
+      this.room6RopeMesh = new THREE.Mesh(ropeGeo, ropeMat);
+      this.room6RopeMesh.position.set(608, -(160 + ropeH / 2), 0);
+      this.room6RopeMesh.visible = false;
+      this.staticGroup.add(this.room6RopeMesh);
+
+      // Anchor bolt
+      const boltGeo = new THREE.TorusGeometry(6, 2.0, 8, 16);
+      const boltMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.8 });
+      const bolt = new THREE.Mesh(boltGeo, boltMat);
+      bolt.position.set(608, -160, 0);
+      this.staticGroup.add(bolt);
 
     } else if (roomId === 7) {
       // Patrolling Guard
@@ -617,6 +646,18 @@ export class CampaignRoomThreeEnvironment {
       this.searchlightObj.target.position.set(sX, -544, 0);
       this.searchlightObj.target.updateMatrixWorld();
       this.searchlightBeam.position.set(sX, 0, 0);
+    }
+
+    // 2b. Room 5 Secret Panel
+    if (roomId === 5 && this.room5PanelMesh) {
+      const opened = pz.deployedMechanisms.includes('movable_panel');
+      this.room5PanelMesh.position.y = opened ? -560 : -512;
+    }
+
+    // 2c. Room 6 Shaft Rope
+    if (roomId === 6 && this.room6RopeMesh) {
+      const deployed = pz.deployedMechanisms.includes('shaft_rope');
+      this.room6RopeMesh.visible = deployed;
     }
 
     // 3. Room 7 Patrolling Guard

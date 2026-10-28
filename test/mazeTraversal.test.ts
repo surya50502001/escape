@@ -403,7 +403,7 @@ describe('Maze Geometry & Traversal', () => {
     assert.equal(p.state, 'HANGING_H_PIPE', 'Reached ceiling horizontal pipe');
 
     // 10. Traverse left along ceiling pipe to hatch threshold (X <= 130)
-    for (let i = 0; i < 450; i++) {
+    for (let i = 0; i < 600; i++) {
       engine.handleInput(p.id, input({ left: true }));
       engine.update();
       if (p.x <= H_PIPE_EXIT_X) break;

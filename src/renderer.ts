@@ -1963,7 +1963,7 @@ export class GameRenderer {
     for (const ladder of campaign.ladders) {
       if (!ladder.isPlaced) continue;
 
-      if (ladder.id === 'cell_rope') {
+      if (ladder.id === 'cell_rope' || ladder.id === 'shaft_rope') {
         // Deployed climbable rope
         ctx.strokeStyle = '#ca8a04';
         ctx.lineWidth = 4;
@@ -2108,6 +2108,24 @@ export class GameRenderer {
       ctx.font = 'bold 9px monospace';
       ctx.textAlign = 'center';
       ctx.fillText(opened ? 'OPEN' : 'PANEL', 832, 516);
+    }
+
+    // Room 6: Shaft Anchor
+    if (campaign.roomId === 6) {
+      ctx.fillStyle = '#eab308';
+      ctx.beginPath();
+      ctx.arc(608, 160, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      if (!campaign.puzzleState.deployedMechanisms.includes('shaft_rope')) {
+        ctx.fillStyle = '#fef08a';
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('⚓ SHAFT ROPE ANCHOR', 608, 144);
+      }
     }
 
     // Room 7: Guard Patrol at guardX
@@ -2353,6 +2371,25 @@ export class GameRenderer {
     ctx.fillStyle = '#94a3b8';
     ctx.font = '10px monospace';
     ctx.fillText(rosterStr || 'Solo Prisoner', this.width - 326, 58);
+
+    // Airlock Evacuation Warning Banner
+    if (campaign.evacuationWarning) {
+      const remainingSec = Math.max(0, campaign.evacuationWarning.remainingSeconds).toFixed(1);
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.9)';
+      const bW = 540;
+      const bH = 36;
+      const bX = this.width / 2 - bW / 2;
+      const bY = 70;
+      ctx.fillRect(bX, bY, bW, bH);
+      ctx.strokeStyle = '#fef08a';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(bX, bY, bW, bH);
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 13px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`⚠ AIRLOCK EVACUATION IN ${remainingSec}s TO ROOM ${campaign.evacuationWarning.targetRoomId}!`, this.width / 2, bY + 23);
+    }
 
     // Center-Bottom Interaction Prompt
     if (campaign.interactionPrompt) {

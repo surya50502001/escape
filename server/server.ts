@@ -160,12 +160,16 @@ wss.on('connection', (ws: WebSocket) => {
           let existingPlayer = targetCampaign.players.get(playerId);
 
           // Find existing player by token if reconnecting
+          let targetRoomId = 1;
           if (token) {
             for (const [pId, sess] of targetCampaign.playerSessions.entries()) {
               if (sess.resumeToken === token) {
                 playerId = pId;
                 existingPlayer = targetCampaign.players.get(pId);
                 resumeToken = token;
+                if (sess.lastRoomId) {
+                  targetRoomId = sess.lastRoomId;
+                }
                 break;
               }
             }
@@ -203,7 +207,7 @@ wss.on('connection', (ws: WebSocket) => {
               hazardCooldown: 0,
               carryingLadderId: null
             };
-            targetCampaign.addPlayer(player, 1, resumeToken);
+            targetCampaign.addPlayer(player, targetRoomId, resumeToken);
           }
 
           campaignManager.associateTokenWithCampaign(resumeToken, targetCampaign.id);

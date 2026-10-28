@@ -1,77 +1,84 @@
-# THE PIT (ESCAPE) - 2D Side-View Prison Escape Survival
+# The Pit (Escape) — Multiplayer Co-op Prison Escape
 
-A dark, claustrophobic 2D side-view cross-sectional multiplayer prison escape survival game. Ten prisoners are locked inside an enclosed underground chamber.
-
-The camera shows a **side-on, cross-sectional view of the room** like a gritty 2D survival platformer. The physical environment and traversal route are the central focus.
+A gritty, authoritative multiplayer co-op prison escape game featuring an underground 10-chamber facility, cooperative traversal mechanics, physics puzzles, stealth obstacles, and dual 3D (Three.js WebGL) / 2D (HTML5 Canvas) rendering pipelines.
 
 ---
 
-## 🗺️ Exact Level Layout & Traversal Route
+## 🏛️ Game Modes
 
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│ [OVERSEER & HATCH]  ══════ HORIZONTAL CEILING PIPE ═══════╗            │
-│  (Upper-Left duct)   (Hand-over-hand traversal to left)    ║            │
-│                                                           ║            │
-│                                                           ║ VERTICAL   │
-│                                                           ║ WALL PIPE  │
-│                                                           ║ (Climb up) │
-│                                                           ║            │
-│                                                           ║            │
-│               [SINGLE ROPE ON FLOOR]                      ║            │
-│═══════════════════════════════════════════════════════════╩════════════│
-│                     DIRTY CONCRETE PIT FLOOR                           │
-└────────────────────────────────────────────────────────────────────────┘
-```
+### 1. 10-Chamber Co-op Campaign
+1 to 5 players work together to break out of the high-security subterranean prison facility. All progress, room states, unlocked containers, deployed ropes, cut hatches, and items persist authoritatively on the server.
 
-The traversal path is:
-**Floor ➔ Climb right-wall pipe ➔ Hang underneath ceiling pipe ➔ Traverse hand-over-hand to the left ➔ Reach upper-left escape hatch.**
+- **Chamber 1 — The Dormitory Holding Block:** Co-op boost jump (`W` / `Space` in boost zone), high walkway access, rope anchor deployment to floor, and airlock transition. Includes opening prisoner arrival cinematic.
+- **Chamber 2 — The Drainage Cistern:** Heavy pushable movable crate (`A`/`D` shove) bridging floor to mid platform, and reset lever if crate gets trapped.
+- **Chamber 3 — The Guard Quarters:** Sleeping guard stealth evasion. Low floor crossing triggers alarm stun and returns prisoners to holding nook; players must use the high ceiling pipe and catwalk bypass.
+- **Chamber 4 — Surveillance Gallery:** Sweeping searchlight spotlight. Players must dash between solid concrete pillars during dark intervals.
+- **Chamber 5 — The Pipe Vault:** Movable secret panel concealing an optional climbable hemp rope.
+- **Chamber 6 — The Vertical Shaft:** Multi-tier shaft traversal with a rope anchor deployable down to the recovery platform for full team climbability.
+- **Chamber 7 — Patrol Corridor:** Armed patrolling sentry with visual flashlight cone.
+- **Chamber 8 — Dual Switch Lock:** Simultaneous dual-switch pneumatic puzzle. Requires two switches within a 12-second window (co-op or solo sprint) to permanently unlock the blast door.
+- **Chamber 9 — Secure Storage:** Key niche holding the brass key, used to unlock heavy industrial Box C and retrieve the mandatory steel cutting tool.
+- **Chamber 10 — Surface Breach:** Platform climbing, emergency ladder deployment to the floor, solo backtracking to Room 9 to retrieve the cutting tool with independent room presence, reinforced steel rebar cutting, and surface breakthrough to freedom!
+
+### 2. Survival Pit (Legacy Elimination Arena)
+Up to 10 prisoners fight inside a single enclosed pit chamber for a limited escape quota overseen by an armed sniper. Pick up ropes, tackle rivals, kick or struggle on pipes, and throw rocks.
 
 ---
 
-## 💀 Game Mechanics
+## 🕹️ Controls & Interaction
 
-1. **One Enclosed Underground Chamber:**
-   - Tall rough concrete/rock walls with industrial grime, steel girders, water seepage, and harsh lighting.
-   - Floor at bottom ($Y = 620$) where all prisoners initially stand.
-2. **The Pipe Traversal:**
-   - **Right-Wall Vertical Pipe ($X = 920$):** Shinny and climb upward with `W/Up` or down with `S/Down`.
-   - **Ceiling Horizontal Pipe ($Y = 90$):** Hang underneath with both arms and traverse hand-over-hand toward the escape opening with `A/Left`.
-   - Players can lose grip, get pulled down, or be knocked off by rocks or tackles.
-3. **The Single Floor Rope:**
-   - A single coiled rope sits on the concrete floor.
-   - Any prisoner can walk to it and press `E` to pick it up.
-   - Aim with mouse and Click to throw the rope toward climbing or hanging prisoners.
-   - If attached, press `Spacebar` to violently jerk the victim off the pipe down to the concrete floor!
-4. **The Anonymous Overseer at Upper-Left:**
-   - Shadowy silhouette standing in the upper-left escape duct with a scoped sniper rifle.
-   - Periodically announces the escape quota (e.g. *"I WILL TAKE 1 PRISONER"*).
-   - If multiple prisoners touch the hatch simultaneously or violate quota, the Overseer snipes them.
-5. **Realistic 2D Human Prisoner Silhouettes:**
-   - Proportionate human bodies with articulated limbs, prison clothing, realistic walk/run cycles, vertical pipe climbing, and ceiling hanging animations.
-   - Not colorful cartoons, spacesuits, or Among Us astronauts.
-
----
-
-## 🕹️ Controls
-
-| Key | Action |
+| Key / Input | Action |
 | :--- | :--- |
-| **`A` / `D`** or Left / Right | Run left / right across the floor |
-| **`W`** or Up | Jump / Grab and climb up the right-wall pipe |
-| **`S`** or Down | Climb down / Drop off pipe into the pit |
-| **`E`** | Pick up rope from floor / Drop rope |
-| **Mouse Cursor** | Aim throw angle |
-| **Left Click** | Throw rope / Throw rock |
-| **`Spacebar`** | Yank attached rope / Tackle dash on floor |
-| **Audio Toggle** | Toggle procedural sound effects |
+| **`A` / `D`** or **`←` / `→`** | Move left / right (visually rotates character facing direction) |
+| **`W` / `Space`** or **`↑`** | Jump / Climb up ladder, rope, or vertical pipe / Co-op boost in boost zone |
+| **`S`** or **`↓`** | Crouch / Climb down ladder or rope / Drop from horizontal pipe |
+| **`E`** | Contextual Interaction: pick up ground item, deploy ropes, activate switches, unlock Box C, cut hatch, push crate |
+| **`G`** | Drop currently carried item onto the floor |
+| **`F2` / Toggle Button** | Switch between 3D Three.js renderer and 2D Canvas fallback |
+| **Mouse Aim & Click** | Throw rope or rock (Survival arena mode) |
+| **Spacebar (in Cinematic)**| Skip opening sequence to jump straight into gameplay |
 
 ---
 
-## 🚀 Quickstart
+## 🛡️ Authoritative Architecture & Safety Features
+
+1. **Authoritative 30 Hz Simulation:**
+   Server runs the authoritative physics engine at 30 ticks/second, ensuring consistent collision detection, Swept AABB platform landing without tunneling, and multiplayer synchronization.
+2. **15-Second Airlock Evacuation:**
+   When lead players advance forward through an airlock door, a 15-second timer displays for trailing players. Once expired, delayed, downed, or disconnected players are automatically evacuated to the target room's safe staging area and revived, preventing softlocks.
+3. **Independent Room Presence During Backtracking:**
+   Backtracking (e.g. Room 10 $\to$ Room 9 to retrieve the cutting tool) does **not** trigger an evacuation or drag waiting teammates out of Room 10. Each room maintains independent player tracking.
+4. **Seamless Reconnection:**
+   Disconnecting players have their session preserved via `resumeToken`. Upon reconnecting, players rejoin directly into their last active room (`lastRoomId`) rather than restarting at Room 1.
+5. **Dual 3D / 2D Presentation & GPU Memory Management:**
+   All 10 chambers, procedural 3D ground items (keys, bolt cutters, ropes), and animated mechanisms (switches, spotlights, guards, ladders) render in Three.js WebGL with recursive GPU material/geometry disposal on room transitions. Individual player material clones prevent palette bleeding on disconnect.
+
+---
+
+## 🚀 Quickstart & Verification
+
+### Prerequisites
+- Node.js (v18+)
+- npm
+
+### Installation & Build
 ```bash
+# Install dependencies
 npm install
+
+# Compile TypeScript and bundle production assets with Vite
 npm run build
+```
+
+### Running Automated Test Suite
+The repository includes a comprehensive 280-test suite verifying character facing direction, camera framing, platform collision, tunneling prevention, 10-room puzzles, airlock evacuations, and stealth mechanics:
+```bash
+npm test
+```
+
+### Running the Server
+```bash
+# Start the production Node server
 npm start
 ```
-Open [http://localhost:3001](http://localhost:3001) in your browser.
+Then navigate to `http://localhost:3001` in your browser.

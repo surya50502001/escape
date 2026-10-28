@@ -90,6 +90,10 @@ export class RoomRuntime {
   private initDefaultState(): void {
     // Populate default ground items from room definition
     for (const itm of this.loadedRoom.items) {
+      // In Room 5, optional rope is concealed behind the movable panel until opened
+      if (this.roomId === 5 && itm.id === 'optional_rope' && !this.deployedMechanisms.has('movable_panel')) {
+        continue;
+      }
       this.groundItems.set(itm.id, {
         id: itm.id,
         type: itm.type,
@@ -181,6 +185,28 @@ export class RoomRuntime {
       }
     }
 
+    // 1.5 Room 3 Sleeping Guard detection
+    if (this.roomId === 3) {
+      for (const p of this.engine.state.players) {
+        // Sleeping guard at point [24, 3] (x=768, y=544)
+        // Detects un-occluded floor traversers within 45px
+        if (p.y > 480 && Math.abs(p.x - 768) < 45) {
+          const inCoverA = p.x >= 448 && p.x <= 576;
+          const inCoverB = p.x >= 960 && p.x <= 1088;
+          if (!inCoverA && !inCoverB && (!p.hazardCooldown || p.hazardCooldown <= 0)) {
+            p.x = 96;
+            p.y = 544;
+            p.vx = 0;
+            p.vy = 0;
+            p.stunnedTimer = 1.0;
+            p.hazardCooldown = 3.0;
+            p.state = 'STUNNED';
+            this.engine.emitSound({ type: 'TACKLE', x: 96, y: 544 });
+          }
+        }
+      }
+    }
+
     // 2. Room 4 Searchlight sweep
     if (this.roomId === 4) {
       this.searchlightX += this.searchlightDirection * 160 * DT;
@@ -198,7 +224,7 @@ export class RoomRuntime {
           // Check if behind Cover A [12, 3, 16, 6] (x 384..512) or Cover B [29, 3, 33, 6] (x 928..1056)
           const inCoverA = p.x >= 384 && p.x <= 512;
           const inCoverB = p.x >= 928 && p.x <= 1056;
-          if (!inCoverA && !inCoverB && p.hazardCooldown <= 0) {
+          if (!inCoverA && !inCoverB && (!p.hazardCooldown || p.hazardCooldown <= 0)) {
             p.stunnedTimer = 0.5;
             p.hazardCooldown = 2.0;
             p.state = 'STUNNED';
@@ -223,7 +249,7 @@ export class RoomRuntime {
         if (p.y > 500 && Math.abs(p.x - this.guardX) < 50) {
           const inCoverA = p.x >= 320 && p.x <= 448;
           const inCoverB = p.x >= 1056 && p.x <= 1184;
-          if (!inCoverA && !inCoverB && p.hazardCooldown <= 0) {
+          if (!inCoverA && !inCoverB && (!p.hazardCooldown || p.hazardCooldown <= 0)) {
             // Guard sends player to holding safe zone without softlock
             p.x = 96;
             p.y = 544;
@@ -300,6 +326,24 @@ export class RoomRuntime {
         y: 192,
         width: 28,
         height: 352,
+        state: 'PLACED',
+        carriedByPlayerId: null,
+        isPlaced: true,
+        leanAngle: 0
+      });
+    }
+  }
+
+  public deployShaftRope(): void {
+    this.deployedMechanisms.add('shaft_rope');
+    const existing = this.engine.state.ladders.find(l => l.id === 'shaft_rope');
+    if (!existing) {
+      this.engine.state.ladders.push({
+        id: 'shaft_rope',
+        x: 608,
+        y: 160,
+        width: 16,
+        height: 352, // 512 - 160
         state: 'PLACED',
         carriedByPlayerId: null,
         isPlaced: true,
@@ -400,6 +444,15 @@ export class RoomRuntime {
           });
         }
         return { action: 'OPEN_PANEL', message: 'Secret panel opened! Optional rope revealed.' };
+      }
+    }
+
+    // 3b. Room 6: Shaft rope anchor
+    if (this.roomId === 6) {
+      const anchorDist = Math.hypot(player.x - 608, player.y - 160);
+      if (anchorDist < 60) {
+        this.deployShaftRope();
+        return { action: 'DEPLOY_SHAFT_ROPE', message: 'Rope deployed down shaft to platform!' };
       }
     }
 
@@ -510,6 +563,10 @@ export class RoomRuntime {
 
     if (this.roomId === 5 && player.x >= 780 && player.x <= 880 && player.y > 460 && !this.deployedMechanisms.has('movable_panel')) {
       return '[E] Open Secret Panel';
+    }
+
+    if (this.roomId === 6 && Math.hypot(player.x - 608, player.y - 160) < 60 && !this.deployedMechanisms.has('shaft_rope')) {
+      return '[E] Deploy Rope to Platform';
     }
 
     if (this.roomId === 8) {

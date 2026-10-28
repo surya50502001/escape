@@ -10,4 +10,5 @@ import './tunnelingFix.test.js';
 import './campaignSession.test.js';
 import './campaignInteractivePlaythrough.test.js';
 import './introAndLevel2Audit.test.js';
+import './campaignReleaseAudit.test.js';
 

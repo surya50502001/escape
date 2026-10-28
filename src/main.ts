@@ -322,62 +322,63 @@ function connectToGame(name: string, roomCode?: string, createRoom?: boolean, mo
             (window as unknown as { isRopeAttachedToMe: boolean }).isRopeAttachedToMe =
               Boolean(latestState?.rope.state === 'ATTACHED' && latestState?.rope.heldByPlayerId === me.id);
           }
+        }
 
-          // Handle Sound & Visual Events
-          if (latestState?.soundEvents) {
-            for (const ev of latestState.soundEvents) {
-              if (ev.type === 'GUNSHOT') {
-                sound.playGunshot();
-                if (ev.x !== undefined && ev.y !== undefined) {
-                  renderer.addBloodSparks(ev.x, ev.y, '#e74c3c', 25);
-                }
-              } else if (ev.type === 'CLANG') {
-                sound.playClang();
-              } else if (ev.type === 'TACKLE') {
-                sound.playTackle();
-                if (ev.x !== undefined && ev.y !== undefined) {
-                  renderer.addBloodSparks(ev.x, ev.y, '#ecf0f1', 10);
-                }
-              } else if (ev.type === 'ROCK_HIT') {
-                sound.playRockHit();
-                if (ev.x !== undefined && ev.y !== undefined) {
-                  renderer.addBloodSparks(ev.x, ev.y, '#f39c12', 15);
-                }
-              } else if (ev.type === 'ESCAPE') {
-                sound.playEscape();
-              } else if (ev.type === 'ANNOUNCEMENT') {
-                sound.playAnnouncement();
-              } else if (ev.type === 'ROPE_ATTACH') {
-                sound.playRockHit();
-              } else if (ev.type === 'ROPE_PULL') {
-                sound.playTackle();
-              } else if (ev.type === 'FALL_IMPACT') {
-                sound.playTackle();
-                if (ev.x !== undefined && ev.y !== undefined) {
-                  renderer.addBloodSparks(ev.x, ev.y, '#94a3b8', 12);
-                }
-              } else if (ev.type === 'STEAM_HISS') {
-                sound.playSteamHiss();
-              } else if (ev.type === 'SPIKE_HIT') {
-                sound.playSpikeHit();
-                if (ev.x !== undefined && ev.y !== undefined) {
-                  renderer.addBloodSparks(ev.x, ev.y, '#dc2626', 15);
-                }
-              } else if (ev.type === 'CLIMB_KICK') {
-                sound.playClimbKick();
-                if (ev.x !== undefined && ev.y !== undefined) {
-                  renderer.addBloodSparks(ev.x, ev.y, '#f59e0b', 14);
-                }
-              } else if (ev.type === 'CLIMB_GRAB') {
-                sound.playClimbGrab();
-                if (ev.x !== undefined && ev.y !== undefined) {
-                  renderer.addBloodSparks(ev.x, ev.y, '#38bdf8', 10);
-                }
-              } else if (ev.type === 'CLIMB_STRUGGLE') {
-                sound.playStruggle();
-              } else if (ev.type === 'PICKUP' || ev.type === 'DROP') {
-                sound.playClang();
+        // Handle Sound & Visual Events for both Campaign and Survival modes
+        const activeEvents = isCampaignMode ? latestCampaignState?.soundEvents : latestState?.soundEvents;
+        if (activeEvents) {
+          for (const ev of activeEvents) {
+            if (ev.type === 'GUNSHOT') {
+              sound.playGunshot();
+              if (ev.x !== undefined && ev.y !== undefined) {
+                renderer.addBloodSparks(ev.x, ev.y, '#e74c3c', 25);
               }
+            } else if (ev.type === 'CLANG') {
+              sound.playClang();
+            } else if (ev.type === 'TACKLE') {
+              sound.playTackle();
+              if (ev.x !== undefined && ev.y !== undefined) {
+                renderer.addBloodSparks(ev.x, ev.y, '#ecf0f1', 10);
+              }
+            } else if (ev.type === 'ROCK_HIT') {
+              sound.playRockHit();
+              if (ev.x !== undefined && ev.y !== undefined) {
+                renderer.addBloodSparks(ev.x, ev.y, '#f39c12', 15);
+              }
+            } else if (ev.type === 'ESCAPE') {
+              sound.playEscape();
+            } else if (ev.type === 'ANNOUNCEMENT') {
+              sound.playAnnouncement();
+            } else if (ev.type === 'ROPE_ATTACH') {
+              sound.playRockHit();
+            } else if (ev.type === 'ROPE_PULL') {
+              sound.playTackle();
+            } else if (ev.type === 'FALL_IMPACT') {
+              sound.playTackle();
+              if (ev.x !== undefined && ev.y !== undefined) {
+                renderer.addBloodSparks(ev.x, ev.y, '#94a3b8', 12);
+              }
+            } else if (ev.type === 'STEAM_HISS') {
+              sound.playSteamHiss();
+            } else if (ev.type === 'SPIKE_HIT') {
+              sound.playSpikeHit();
+              if (ev.x !== undefined && ev.y !== undefined) {
+                renderer.addBloodSparks(ev.x, ev.y, '#dc2626', 15);
+              }
+            } else if (ev.type === 'CLIMB_KICK') {
+              sound.playClimbKick();
+              if (ev.x !== undefined && ev.y !== undefined) {
+                renderer.addBloodSparks(ev.x, ev.y, '#f59e0b', 14);
+              }
+            } else if (ev.type === 'CLIMB_GRAB') {
+              sound.playClimbGrab();
+              if (ev.x !== undefined && ev.y !== undefined) {
+                renderer.addBloodSparks(ev.x, ev.y, '#38bdf8', 10);
+              }
+            } else if (ev.type === 'CLIMB_STRUGGLE') {
+              sound.playStruggle();
+            } else if (ev.type === 'PICKUP' || ev.type === 'DROP') {
+              sound.playClang();
             }
           }
         }
