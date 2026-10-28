@@ -556,7 +556,7 @@ function gameLoop() {
   const use3D = activeRendererMode === '3d' && threeRenderer && threeRenderer.isReady();
 
   if (isCampaignMode && latestCampaignState) {
-    if (use3D && latestCampaignState.roomId === 1) {
+    if (use3D) {
       if (webglCanvas && webglCanvas.style.display === 'none') {
         webglCanvas.style.display = 'block';
       }

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { ClientCampaignSync } from '../../server/campaign/campaignSession.js';
 import { GameState } from '../../server/types.js';
 import { CharacterModelManager } from './characterModelManager.js';
-import { Room1ThreeEnvironment } from './room1Three.js';
+import { CampaignRoomThreeEnvironment } from './campaignRoomThree.js';
 
 export class ThreeGameRenderer {
   public static instance: ThreeGameRenderer | null = null;
@@ -10,7 +10,7 @@ export class ThreeGameRenderer {
   public renderer: THREE.WebGLRenderer | null = null;
   public scene: THREE.Scene;
   public camera: THREE.OrthographicCamera;
-  public room1Env: Room1ThreeEnvironment;
+  public roomEnv: CampaignRoomThreeEnvironment;
   public charManager: CharacterModelManager;
 
   public cameraX: number = 500;
@@ -55,8 +55,8 @@ export class ThreeGameRenderer {
     this.camera.lookAt(500, -350, 0);
 
     // 3D Environment & Characters
-    this.room1Env = new Room1ThreeEnvironment();
-    this.scene.add(this.room1Env.group);
+    this.roomEnv = new CampaignRoomThreeEnvironment();
+    this.scene.add(this.roomEnv.group);
 
     this.charManager = CharacterModelManager.getInstance();
 
@@ -138,11 +138,14 @@ export class ThreeGameRenderer {
       this.targetCameraY = roomH / 2;
     }
 
-    // Clamp camera within room bounds
-    const minCamX = this.width / 2;
-    const maxCamX = Math.max(minCamX, roomW - this.width / 2);
-    const minCamY = this.height / 2;
-    const maxCamY = Math.max(minCamY, roomH - this.height / 2);
+    // Clamp camera within room bounds (respecting 1.6x zoom frustum)
+    const zoom = 1.6;
+    const halfW = (this.width / 2) / zoom;
+    const halfH = (this.height / 2) / zoom;
+    const minCamX = halfW;
+    const maxCamX = Math.max(minCamX, roomW - halfW);
+    const minCamY = halfH;
+    const maxCamY = Math.max(minCamY, roomH - halfH);
 
     this.targetCameraX = Math.max(minCamX, Math.min(maxCamX, this.targetCameraX));
     this.targetCameraY = Math.max(minCamY, Math.min(maxCamY, this.targetCameraY));
@@ -155,13 +158,8 @@ export class ThreeGameRenderer {
     this.camera.position.set(this.cameraX, -this.cameraY, 1000);
     this.camera.lookAt(this.cameraX, -this.cameraY, 0);
 
-    // 2. Update Room 1 3D Environment State
-    if (campaign.roomId === 1) {
-      this.room1Env.group.visible = true;
-      this.room1Env.update(campaign);
-    } else {
-      this.room1Env.group.visible = false;
-    }
+    // 2. Update 3D Prison Environment State (Supports all campaign rooms)
+    this.roomEnv.update(campaign);
 
     // 3. Update & Animate 3D Human Characters
     this.charManager.updatePlayers(campaign.players, dt, campaign.teamRoster);

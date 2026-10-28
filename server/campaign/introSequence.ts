@@ -74,11 +74,20 @@ export class IntroSequence {
     this.state.elapsed += dt;
     this.phaseTimer += dt;
 
-    const duration = PHASE_DURATIONS[this.state.phase];
-    if (this.phaseTimer >= duration) {
-      return this.advancePhase();
+    // Absolute fail-safe timeout: sequence cannot exceed 10.5 seconds under any circumstance
+    if (this.state.elapsed >= 10.5) {
+      this.skip();
+      return true;
     }
-    return false;
+
+    let changed = false;
+    while (this.phaseTimer >= PHASE_DURATIONS[this.state.phase]) {
+      this.phaseTimer -= PHASE_DURATIONS[this.state.phase];
+      this.advancePhase();
+      changed = true;
+      if ((this.state.phase as IntroPhase) === 'PLAY') break;
+    }
+    return changed;
   }
 
   private advancePhase(): boolean {
@@ -103,8 +112,9 @@ export class IntroSequence {
     return true;
   }
 
-  /** Skip to gameplay immediately (e.g. on reconnect after sequence already ran). */
+  /** Skip to gameplay immediately (e.g. on player skip request or reconnect). */
   public skip(): void {
+    this.started = true;
     this.state.phase = 'PLAY';
     this.state.keyStolen = true;
     this.state.doorUnlocked = true;

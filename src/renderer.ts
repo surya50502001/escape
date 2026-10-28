@@ -1811,18 +1811,22 @@ export class GameRenderer {
     const roomW = campaign.roomWidth || 1600;
     const roomH = campaign.roomHeight || 640;
 
-    // 1. Camera Tracking
+    // 1. Camera Tracking (Zoom factor 1.6 matches Three.js 2.5D camera)
+    const zoom = 1.6;
+    const viewW = this.width / zoom;
+    const viewH = this.height / zoom;
+
     const localPlayer = campaign.players.find(p => p.id === localPlayerId);
     if (localPlayer) {
-      this.targetCameraX = localPlayer.x - this.width / 2;
-      this.targetCameraY = localPlayer.y - this.height * 0.55;
+      this.targetCameraX = localPlayer.x - viewW / 2;
+      this.targetCameraY = localPlayer.y - viewH * 0.55;
     } else {
       this.targetCameraX = 0;
-      this.targetCameraY = Math.max(0, roomH - this.height);
+      this.targetCameraY = Math.max(0, roomH - viewH);
     }
 
-    const maxCamX = Math.max(0, roomW - this.width);
-    const maxCamY = Math.max(0, roomH - this.height);
+    const maxCamX = Math.max(0, roomW - viewW);
+    const maxCamY = Math.max(0, roomH - viewH);
     this.targetCameraX = Math.max(0, Math.min(maxCamX, this.targetCameraX));
     this.targetCameraY = Math.max(0, Math.min(maxCamY, this.targetCameraY));
 
@@ -1838,6 +1842,7 @@ export class GameRenderer {
 
     // ── WORLD TRANSFORM ─────────────────────────────────────────
     ctx.save();
+    ctx.scale(zoom, zoom);
     ctx.translate(-Math.round(this.cameraX), -Math.round(this.cameraY));
 
     if (campaign.roomId === 1) {

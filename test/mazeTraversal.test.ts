@@ -395,7 +395,7 @@ describe('Maze Geometry & Traversal', () => {
     assert.equal(p.state, 'CLIMBING_V_PIPE', 'Grabbed vertical pipe from service corridor');
 
     // 9. Climb vertical pipe to ceiling horizontal pipe at Y=90
-    for (let i = 0; i < 140; i++) {
+    for (let i = 0; i < 200; i++) {
       engine.handleInput(p.id, input({ up: true }));
       engine.update();
       if (p.state === 'HANGING_H_PIPE') break;

@@ -9,4 +9,5 @@ import './campaignTraversal.test.js';
 import './tunnelingFix.test.js';
 import './campaignSession.test.js';
 import './campaignInteractivePlaythrough.test.js';
+import './introAndLevel2Audit.test.js';
 

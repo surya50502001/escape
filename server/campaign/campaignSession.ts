@@ -194,6 +194,11 @@ export class CampaignSession {
       return false; // Not a valid transition edge
     }
 
+    // If leaving Room 1, ensure opening sequence is marked complete
+    if (currentRoomId === 1 && !this.intro.isComplete()) {
+      this.intro.skip();
+    }
+
     // Atomically transfer player
     sourceRoom.removePlayer(playerId);
 
@@ -367,11 +372,18 @@ export class CampaignSession {
    * Process client input and authoritative room interactions.
    */
   public handleInput(playerId: string, input: ClientInput): void {
-    // Block all player input during the opening cinematic
-    if (this.intro.isInputLocked()) return;
-
     const room = this.getPlayerRoom(playerId);
     if (!room) return;
+
+    // Only block input in Room 1 during the active opening cinematic
+    if (room.roomId === 1 && this.intro.isInputLocked()) {
+      // Space or E allows skipping the cinematic to begin playing immediately
+      if (input.jump || input.interact) {
+        this.intro.skip();
+      } else {
+        return;
+      }
+    }
 
     const player = room.getPlayer(playerId);
     if (!player) return;

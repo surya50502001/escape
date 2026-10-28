@@ -319,10 +319,10 @@ export class RoomRuntime {
   }
 
   /**
-   * Authoritative item pickup within pickup radius (48 px).
+   * Authoritative item pickup within pickup radius (64 px).
    */
   public pickupGroundItem(player: Player, itemId?: string): CampaignItem | null {
-    const PICKUP_RADIUS = 48;
+    const PICKUP_RADIUS = 64;
     for (const [id, item] of this.groundItems.entries()) {
       if (itemId && id !== itemId) continue;
       const dist = Math.hypot(player.x - item.x, player.y - item.y);
