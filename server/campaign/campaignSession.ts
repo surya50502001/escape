@@ -529,26 +529,7 @@ export class CampaignSession {
         return;
       }
 
-      // 2. Try atomic handoff if holding item and near teammate (and not consumed by room interaction)
-      if (carriedItem) {
-        for (const other of room.getPlayers()) {
-          if (other.id !== playerId && Math.hypot(player.x - other.x, player.y - other.y) <= 60) {
-            if (!this.playerItems.has(other.id)) {
-              this.handoffItem(playerId, other.id);
-              return;
-            }
-          }
-        }
-      }
-
-      // 3. Try ground item pickup if not holding anything
-      if (!carriedItem) {
-        if (this.pickupItem(playerId)) {
-          return;
-        }
-      }
-
-      // 4. Try door transition
+      // 2. Try door transition
       const door = room.getTouchingDoor(player);
       if (door && door.targetRoomId) {
         // Room 8 check: door must be unlocked
@@ -566,6 +547,25 @@ export class CampaignSession {
         }
         if (typeof door.targetRoomId === 'number') {
           this.transitionPlayer(playerId, door.targetRoomId);
+          return;
+        }
+      }
+
+      // 3. Try atomic handoff if holding item and near teammate (and not consumed by door/room interaction)
+      if (carriedItem) {
+        for (const other of room.getPlayers()) {
+          if (other.id !== playerId && Math.hypot(player.x - other.x, player.y - other.y) <= 60) {
+            if (!this.playerItems.has(other.id)) {
+              this.handoffItem(playerId, other.id);
+              return;
+            }
+          }
+        }
+      }
+
+      // 4. Try ground item pickup if not holding anything
+      if (!carriedItem) {
+        if (this.pickupItem(playerId)) {
           return;
         }
       }

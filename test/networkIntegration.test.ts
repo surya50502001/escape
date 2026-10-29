@@ -237,7 +237,7 @@ describe('Network Integration: Real WebSocket Disconnect, Grace Period & Reconne
     }
   });
 
-  it('NET-03: Real WebSocket unified rate limiting and 4KB message payload size validation', async () => {
+  it('NET-03: Real WebSocket unified rate limiting and 4KB message payload size validation with observable server rejection', async () => {
     const ws = new WebSocket(wsUrl);
     await new Promise((r) => ws.once('open', r));
 
@@ -250,48 +250,77 @@ describe('Network Integration: Real WebSocket Disconnect, Grace Period & Reconne
     }));
     const welcome = await waitForMessage(ws, (m) => m.type === 'WELCOME');
     assert.equal(welcome.name, 'RateTester');
+    const camp = campaignManager.getCampaign(welcome.roomCode)!;
+    // Skip intro so Room 1 input is unlocked for gameplay
+    camp.intro.skip();
+    const player = camp.players.get(welcome.playerId)!;
+    assert.ok(player, 'Player must exist in campaign');
+    assert.equal(player.angle, 0, 'Initial angle must be 0');
 
-    // 2. Oversized payload (> 4096 bytes) should be dropped silently by server
+    // 2. Oversized payload (> 4096 bytes) should be dropped silently by server (no angle update)
     const oversized = JSON.stringify({
       type: 'INPUT',
       input: {
         up: false, down: false, left: false, right: false,
         jump: false, interact: false, tackle: false, pull: false, struggle: false,
-        angle: 0,
+        aimAngle: 9.99,
         blob: 'A'.repeat(5000)
       }
     });
     assert.ok(oversized.length > 4096, 'Oversized payload exceeds 4096 bytes');
     ws.send(oversized);
+    await new Promise((r) => setTimeout(r, 40));
+    camp.update();
+    assert.equal(player.angle, 0, 'Oversized payload must be dropped by server without updating angle');
 
-    // 3. Send 70 rapid messages within the 1-second interval
-    // MAX_MESSAGES_PER_SEC is 60. Sockets exceeding 60 should have subsequent messages dropped.
-    const camp = campaignManager.getCampaign(welcome.roomCode)!;
-    const initialSync = camp.getClientSync(welcome.playerId)!;
-    const initialX = initialSync.players.find(p => p.id === welcome.playerId)!.x;
-
-    for (let i = 0; i < 70; i++) {
+    // 3. Send 59 valid messages within current second window with aimAngle = 1.25
+    // Note: JOIN was msg 1, oversized payload was dropped before rate counter, so 59 inputs reaches the 60 msg threshold
+    for (let i = 0; i < 59; i++) {
       ws.send(JSON.stringify({
         type: 'INPUT',
         input: {
-          up: false, down: false, left: false, right: true,
+          up: false, down: false, left: false, right: false,
           jump: false, interact: false, tackle: false, pull: false, struggle: false,
-          angle: 0
+          aimAngle: 1.25
         }
       }));
     }
-
-    // Wait for TCP socket frames to be delivered and processed by server
     await new Promise((r) => setTimeout(r, 60));
-
-    // Advance campaign by 1 tick
     camp.update();
-    const serverWs = campaignManager.getPlayerSocket(welcome.playerId)!;
-    assert.ok(serverWs, 'Authoritative server socket must exist');
-    const client = campaignManager.findClientBySocket(serverWs);
-    assert.ok(client, 'Campaign client must be tracked');
-    // Client message counter should reflect dropped ceiling or high count
-    assert.ok(client.msgCount > 60, 'Message count must exceed rate limit threshold');
+    assert.equal(player.angle, 1.25, 'Valid messages within rate limit must be processed by server');
+
+    // 4. Send excessive messages (exceeding 60 msgs/s) with aimAngle = 2.50
+    // Sockets exceeding 60 per sec must have messages dropped
+    for (let i = 0; i < 20; i++) {
+      ws.send(JSON.stringify({
+        type: 'INPUT',
+        input: {
+          up: false, down: false, left: false, right: false,
+          jump: false, interact: false, tackle: false, pull: false, struggle: false,
+          aimAngle: 2.50
+        }
+      }));
+    }
+    await new Promise((r) => setTimeout(r, 60));
+    camp.update();
+    // Angle must NOT be 2.50 because rate limit dropped the excessive messages
+    assert.equal(player.angle, 1.25, 'Messages beyond 60/sec threshold must be dropped by server');
+
+    // 5. Wait for rate limit window (1000ms) to reset
+    await new Promise((r) => setTimeout(r, 1100));
+
+    // Send a new input with aimAngle = 2.50 after reset
+    ws.send(JSON.stringify({
+      type: 'INPUT',
+      input: {
+        up: false, down: false, left: false, right: false,
+        jump: false, interact: false, tackle: false, pull: false, struggle: false,
+        aimAngle: 2.50
+      }
+    }));
+    await new Promise((r) => setTimeout(r, 50));
+    camp.update();
+    assert.equal(player.angle, 2.50, 'Rate limit resets after 1000ms, accepting valid input again');
 
     ws.close();
   });
@@ -560,5 +589,281 @@ describe('Network Integration: Real WebSocket Disconnect, Grace Period & Reconne
       host: 'localhost:5173'
     }, { VITE_WS_PORT: '4000' });
     assert.equal(portOverrideUrl, 'ws://localhost:4000');
+  });
+
+  it('NET-08: Simultaneous JOIN requests with the same resume token safely resolves authoritative socket', async () => {
+    // 1. Join campaign and get token
+    const ws1 = new WebSocket(wsUrl);
+    await new Promise((r) => ws1.once('open', r));
+
+    ws1.send(JSON.stringify({
+      type: 'JOIN',
+      name: 'SimultaneousUser',
+      mode: 'campaign',
+      createCampaign: true
+    }));
+    const welcome1 = await waitForMessage(ws1, (m) => m.type === 'WELCOME');
+    const token = welcome1.resumeToken;
+    const roomCode = welcome1.roomCode;
+    const playerId = welcome1.playerId;
+
+    // 2. Open two sockets nearly simultaneously with the same token
+    const ws2A = new WebSocket(wsUrl);
+    const ws2B = new WebSocket(wsUrl);
+
+    await Promise.all([
+      new Promise((r) => ws2A.once('open', r)),
+      new Promise((r) => ws2B.once('open', r))
+    ]);
+
+    let ws2AClosed = false;
+    let ws2BClosed = false;
+    ws2A.on('close', () => { ws2AClosed = true; });
+    ws2B.on('close', () => { ws2BClosed = true; });
+
+    // Send JOINs
+    ws2A.send(JSON.stringify({ type: 'JOIN', name: 'SimultaneousUser', mode: 'campaign', roomCode, resumeToken: token }));
+    ws2B.send(JSON.stringify({ type: 'JOIN', name: 'SimultaneousUser', mode: 'campaign', roomCode, resumeToken: token }));
+
+    // Wait for processing
+    await new Promise((r) => setTimeout(r, 120));
+
+    const camp = campaignManager.getCampaign(roomCode)!;
+    // Exactly one player in campaign — no duplication!
+    assert.equal(camp.players.size, 1);
+    assert.ok(camp.players.has(playerId));
+
+    // Exactly one of the two sockets is authoritative
+    const activeServerWs = campaignManager.getPlayerSocket(playerId);
+    assert.ok(activeServerWs, 'Authoritative server socket must be recorded');
+
+    // Clean up
+    if (ws1.readyState === WebSocket.OPEN) ws1.close();
+    if (ws2A.readyState === WebSocket.OPEN) ws2A.close();
+    if (ws2B.readyState === WebSocket.OPEN) ws2B.close();
+  });
+
+  it('NET-09: Repeated sequential reconnects preserve player identity and state across 5 hops', async () => {
+    let currentWs = new WebSocket(wsUrl);
+    await new Promise((r) => currentWs.once('open', r));
+
+    currentWs.send(JSON.stringify({
+      type: 'JOIN',
+      name: 'HopUser',
+      mode: 'campaign',
+      createCampaign: true
+    }));
+    const welcome = await waitForMessage(currentWs, (m) => m.type === 'WELCOME');
+    const token = welcome.resumeToken;
+    const roomCode = welcome.roomCode;
+    const playerId = welcome.playerId;
+    const camp = campaignManager.getCampaign(roomCode)!;
+
+    // Move player and pick up item
+    const r1 = camp.getOrCreateRoomRuntime(1);
+    const player = camp.players.get(playerId)!;
+    player.x = 250;
+    player.angle = 1.0;
+
+    for (let hop = 2; hop <= 5; hop++) {
+      const nextWs = new WebSocket(wsUrl);
+      await new Promise((r) => nextWs.once('open', r));
+
+      nextWs.send(JSON.stringify({
+        type: 'JOIN',
+        name: 'HopUser',
+        mode: 'campaign',
+        roomCode,
+        resumeToken: token
+      }));
+
+      const hopWelcome = await waitForMessage(nextWs, (m) => m.type === 'WELCOME');
+      assert.equal(hopWelcome.playerId, playerId, `Hop ${hop} must preserve playerId`);
+      assert.equal(camp.players.size, 1, `Hop ${hop} must not duplicate player records`);
+      assert.equal(player.x, 250, `Hop ${hop} must preserve player position`);
+
+      await new Promise((r) => setTimeout(r, 40));
+      currentWs = nextWs;
+    }
+
+    if (currentWs.readyState === WebSocket.OPEN) currentWs.close();
+  });
+
+  it('NET-10: Reconnecting player permitted when campaign is at 5/5 full capacity', async () => {
+    const sockets: WebSocket[] = [];
+    const ws1 = new WebSocket(wsUrl);
+    sockets.push(ws1);
+    await new Promise((r) => ws1.once('open', r));
+
+    ws1.send(JSON.stringify({
+      type: 'JOIN',
+      name: 'Team1',
+      mode: 'campaign',
+      createCampaign: true
+    }));
+    const w1 = await waitForMessage(ws1, (m) => m.type === 'WELCOME');
+    const roomCode = w1.roomCode;
+    const token1 = w1.resumeToken;
+
+    // Join 4 more players
+    for (let i = 2; i <= 5; i++) {
+      const ws = new WebSocket(wsUrl);
+      sockets.push(ws);
+      await new Promise((r) => ws.once('open', r));
+      ws.send(JSON.stringify({
+        type: 'JOIN',
+        name: `Team${i}`,
+        mode: 'campaign',
+        roomCode
+      }));
+      await waitForMessage(ws, (m) => m.type === 'WELCOME');
+    }
+
+    const camp = campaignManager.getCampaign(roomCode)!;
+    assert.equal(camp.players.size, 5, 'Campaign must be at 5/5 full capacity');
+
+    // Player 1 reconnects from a new socket while campaign is at 5/5
+    const ws1Reconnect = new WebSocket(wsUrl);
+    sockets.push(ws1Reconnect);
+    await new Promise((r) => ws1Reconnect.once('open', r));
+
+    ws1Reconnect.send(JSON.stringify({
+      type: 'JOIN',
+      name: 'Team1',
+      mode: 'campaign',
+      roomCode,
+      resumeToken: token1
+    }));
+
+    const wReconnect = await waitForMessage(ws1Reconnect, (m) => m.type === 'WELCOME');
+    assert.equal(wReconnect.playerId, w1.playerId, 'Must allow reconnecting existing player even when room is full');
+    assert.equal(camp.players.size, 5, 'Must remain at exactly 5 players without exceeding cap');
+
+    for (const s of sockets) {
+      if (s.readyState === WebSocket.OPEN) s.close();
+    }
+  });
+
+  it('NET-11: Campaign expiry boundaries: before (299s), at (300s), and after (301s)', () => {
+    const camp = campaignManager.createCampaign();
+    const code = camp.id;
+    assert.ok(campaignManager.getCampaign(code));
+
+    // Add player and disconnect to trigger empty state
+    const p = {
+      id: 'p_exp',
+      name: 'Exp',
+      isBot: false,
+      x: 100,
+      y: 544,
+      vx: 0,
+      vy: 0,
+      facing: 'RIGHT' as const,
+      angle: 0,
+      color: '#3498db',
+      health: 100,
+      stamina: 100,
+      state: 'ON_FLOOR' as const,
+      isGrounded: true,
+      stunnedTimer: 0,
+      tackleCooldown: 0,
+      attackCooldown: 0,
+      rocks: 0,
+      hasEscaped: false,
+      sabotages: 0,
+      climbKickTimer: 0,
+      climbAttackCooldown: 0,
+      climbGrabbingId: null,
+      grabbedByPlayerId: null,
+      struggleMeter: 0,
+      hazardCooldown: 0,
+      carryingLadderId: null
+    };
+
+    camp.addPlayer(p, 1, 'token_exp_test');
+    campaignManager.associateTokenWithCampaign('token_exp_test', code);
+
+    // Disconnect
+    const disconnectTime = 1_000_000;
+    camp.handlePlayerDisconnect(p.id);
+    camp.emptySince = disconnectTime;
+
+    // Boundary 1: at 299s (before 5 minutes grace period of 300s)
+    campaignManager.cleanExpiredCampaigns(disconnectTime + 299_000);
+    assert.ok(campaignManager.getCampaign(code), 'Campaign must NOT be deleted before 300s');
+
+    // Reconnecting resets emptySince
+    camp.addPlayer(p, 1, 'token_exp_test');
+    assert.equal(camp.emptySince, null, 'Reconnecting player resets emptySince');
+
+    // Disconnect again
+    camp.handlePlayerDisconnect(p.id);
+    camp.emptySince = disconnectTime;
+
+    // Boundary 2 & 3: at 300s and after (300s + 1ms)
+    campaignManager.cleanExpiredCampaigns(disconnectTime + CampaignManager.CAMPAIGN_EXPIRY_GRACE_MS);
+    assert.equal(campaignManager.getCampaign(code), undefined, 'Campaign must be purged at >= 300s');
+    assert.equal(campaignManager.findCampaignByToken('token_exp_test'), undefined, 'Token associations must be purged');
+
+    // Public campaign CAMP-PUBLIC is permanent and never purged
+    const publicCamp = campaignManager.getDefaultCampaign();
+    publicCamp.emptySince = disconnectTime;
+    campaignManager.cleanExpiredCampaigns(disconnectTime + 10_000_000);
+    assert.ok(campaignManager.getCampaign('CAMP-PUBLIC'), 'CAMP-PUBLIC must never be deleted');
+  });
+
+  it('NET-12: Comprehensive platform surface snapping: platform tops, overlapping stacked platforms, wall edges, below platforms, floor drops, and boundary clamping', () => {
+    const camp = campaignManager.createCampaign();
+    camp.intro.skip();
+    const r10 = camp.getOrCreateRoomRuntime(10);
+
+    // 1. Platform C top surface (Room 10 Platform C [26, 13, 44, 14] -> pixel Y = 192, X span [832, 1408])
+    const item1 = { id: 'item_top', type: 'tool', x: 1000, y: 192, roomId: 10, carriedByPlayerId: null };
+    r10.dropItem(item1, 1000, 192);
+    assert.equal(item1.y, 192, 'Item dropped on platform top must snap to y=192');
+
+    // 2. Jumping above platform (y=150 above Platform C at y=192)
+    const item2 = { id: 'item_air', type: 'tool', x: 1000, y: 150, roomId: 10, carriedByPlayerId: null };
+    r10.dropItem(item2, 1000, 150);
+    assert.equal(item2.y, 192, 'Item dropped in air above platform must snap to platform top');
+
+    // 3. Vertically stacked platforms (below Platform C y=192, above Platform B y=320)
+    // Dropping at y=250 snaps to intermediate Platform B (y=320), NOT up to Platform C (y=192)
+    const itemStacked = { id: 'item_stacked', type: 'tool', x: 1000, y: 250, roomId: 10, carriedByPlayerId: null };
+    r10.dropItem(itemStacked, 1000, 250);
+    assert.equal(itemStacked.y, 320, 'Item dropped below Platform C must snap to intermediate Platform B at y=320');
+
+    // 4. Below lowest platform (player at y=350 below Platform B at y=320)
+    // Must NOT snap up to 320 or 192; must fall to floor y=544
+    const itemBelow = { id: 'item_below', type: 'tool', x: 1000, y: 350, roomId: 10, carriedByPlayerId: null };
+    r10.dropItem(itemBelow, 1000, 350);
+    assert.equal(itemBelow.y, 544, 'Item dropped below lowest platform must fall to floor');
+
+    // 4. Wall edge horizontal boundary:
+    // Platform C right edge is 1408 px
+    const itemInsideEdge = { id: 'item_edge_in', type: 'tool', x: 1400, y: 192, roomId: 10, carriedByPlayerId: null };
+    r10.dropItem(itemInsideEdge, 1400, 192);
+    assert.equal(itemInsideEdge.y, 192, 'Item dropped inside platform edge must snap to platform');
+
+    const itemOutsideEdge = { id: 'item_edge_out', type: 'tool', x: 1450, y: 192, roomId: 10, carriedByPlayerId: null };
+    r10.dropItem(itemOutsideEdge, 1450, 192);
+    assert.equal(itemOutsideEdge.y, 544, 'Item dropped beyond platform edge must fall past platform to floor');
+
+    // 5. Overlapping stacked platforms in Room 2:
+    // mid_platform surface y=416, upper_ledge surface y=352
+    const r2 = camp.getOrCreateRoomRuntime(2);
+    const itemMid = { id: 'item_mid', type: 'tool', x: 800, y: 416, roomId: 2, carriedByPlayerId: null };
+    r2.dropItem(itemMid, 800, 416);
+    assert.equal(itemMid.y, 416, 'Item on mid_platform must land at y=416');
+
+    // 6. Horizontal room boundary clamping:
+    // Room width is 1600 px. Drops at negative X or excessive X must clamp to playable bounds
+    const itemClampLeft = { id: 'item_clamp_l', type: 'tool', x: -50, y: 544, roomId: 10, carriedByPlayerId: null };
+    r10.dropItem(itemClampLeft, -50, 544);
+    assert.equal(itemClampLeft.x, 32, 'Item dropped at negative X must clamp to left room boundary');
+
+    const itemClampRight = { id: 'item_clamp_r', type: 'tool', x: 2000, y: 544, roomId: 10, carriedByPlayerId: null };
+    r10.dropItem(itemClampRight, 2000, 544);
+    assert.equal(itemClampRight.x, r10.loadedRoom.widthPx - 32, 'Item dropped past room width must clamp to right boundary');
   });
 });

@@ -382,16 +382,20 @@ export class RoomRuntime {
 
   /**
    * Drop an item onto the floor or highest platform directly below the player.
+   * Clamps within room boundaries and raycasts downward to find the closest platform surface.
    */
   public dropItem(item: CampaignItem, x: number, y: number): void {
     item.carriedByPlayerId = null;
     item.roomId = this.roomId;
-    item.x = x;
 
-    // Platform snapping: find highest horizontal platform surface directly beneath player
+    // Clamp horizontal position so item never sits outside playable room or inside exterior boundary walls
+    const clampedX = Math.max(32, Math.min(this.loadedRoom.widthPx - 32, x));
+    item.x = clampedX;
+
+    // Platform snapping: find highest horizontal platform surface directly beneath (clampedX, y)
     let dropY = this.loadedRoom.floorYPx;
     for (const wall of this.loadedRoom.walls) {
-      if (x >= wall.x - 8 && x <= wall.x + wall.width + 8) {
+      if (clampedX >= wall.x - 8 && clampedX <= wall.x + wall.width + 8) {
         if (wall.y >= y - 10 && wall.y < dropY) {
           dropY = wall.y;
         }
@@ -435,7 +439,8 @@ export class RoomRuntime {
     // 2. Room 2: Reset lever
     if (this.roomId === 2) {
       const leverDist = Math.hypot(player.x - 384, player.y - 544);
-      if (leverDist < 50) {
+      if (leverDist < 70) {
+        this.deployedMechanisms.add('crate_reset');
         return { action: 'RESET_CRATE', message: 'Movable crate reset to initial position.' };
       }
     }
@@ -492,10 +497,7 @@ export class RoomRuntime {
     // 5. Room 9: Box C Unlock
     if (this.roomId === 9) {
       const boxDist = Math.hypot(player.x - 1160, player.y - 512);
-      if (boxDist < 60) {
-        if (this.isContainerUnlocked('box_c')) {
-          return { action: 'BOX_ALREADY_OPEN', message: 'Box C is already open.' };
-        }
+      if (boxDist < 60 && !this.isContainerUnlocked('box_c')) {
         if (carriedItem && (carriedItem.type === 'key' || carriedItem.id === 'brass_key')) {
           this.unlockContainer('box_c');
           this.groundItems.set('cutting_tool', {
