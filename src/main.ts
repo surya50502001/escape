@@ -4,6 +4,7 @@ import { GameRenderer } from './renderer.js';
 import { InputManager } from './input.js';
 import { sound } from './audio.js';
 import { ThreeGameRenderer } from './graphics3d/threeRenderer.js';
+import { resolveWebSocketUrl } from './networkConfig.js';
 
 // DOM elements
 const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
@@ -211,15 +212,7 @@ function connectToGame(name: string, roomCode?: string, createRoom?: boolean, mo
   connectingText.textContent = createRoom ? 'CREATING PRIVATE SESSION...' : 'CONNECTING TO SESSION...';
   connectingState.style.display = 'flex';
 
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsHost = window.location.hostname || 'localhost';
-  // In development via Vite (default port 5173 / 517x), target the game server (default port 3001)
-  const isViteDev = window.location.port === '5173' || (window.location.port && Number(window.location.port) >= 5170 && Number(window.location.port) <= 5180);
-  const defaultPort = isViteDev ? '3001' : (window.location.port || '3001');
-  const envUrl = (import.meta as any).env?.VITE_WS_URL;
-  const envPort = (import.meta as any).env?.VITE_WS_PORT;
-  const wsPort = envPort || defaultPort;
-  const wsUrl = envUrl || `${protocol}//${wsHost}:${wsPort}`;
+  const wsUrl = resolveWebSocketUrl();
 
   if (ws) {
     try {

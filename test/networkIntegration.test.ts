@@ -4,6 +4,7 @@ import { AddressInfo } from 'net';
 import { WebSocket } from 'ws';
 import { server, wss } from '../server/server.js';
 import { campaignManager, CampaignManager } from '../server/campaign/campaignManager.js';
+import { resolveWebSocketUrl } from '../src/networkConfig.js';
 
 describe('Network Integration: Real WebSocket Disconnect, Grace Period & Reconnection', () => {
   let port: number;
@@ -503,5 +504,61 @@ describe('Network Integration: Real WebSocket Disconnect, Grace Period & Reconne
     const droppedKey = r1.groundItems.get('brass_key')!;
     assert.ok(droppedKey, 'Item must drop on player disconnect');
     assert.equal(droppedKey.y, 384, 'Dropped item must land on upper walkway at y=384, not room floor');
+  });
+
+  it('NET-07: WebSocket URL resolution supports Vite dev proxy, production direct, and env overrides', () => {
+    // 1. Vite dev on localhost:5173 -> proxies via /ws on same host
+    const viteDevUrl = resolveWebSocketUrl({
+      protocol: 'http:',
+      hostname: 'localhost',
+      port: '5173',
+      host: 'localhost:5173'
+    }, {});
+    assert.equal(viteDevUrl, 'ws://localhost:5173/ws');
+
+    // 2. Vite dev on LAN 192.168.1.50:5173 -> proxies via /ws on same LAN host
+    const lanDevUrl = resolveWebSocketUrl({
+      protocol: 'http:',
+      hostname: '192.168.1.50',
+      port: '5173',
+      host: '192.168.1.50:5173'
+    }, {});
+    assert.equal(lanDevUrl, 'ws://192.168.1.50:5173/ws');
+
+    // 3. Direct production on port 3001
+    const prodDirectUrl = resolveWebSocketUrl({
+      protocol: 'http:',
+      hostname: '192.168.1.50',
+      port: '3001',
+      host: '192.168.1.50:3001'
+    }, {});
+    assert.equal(prodDirectUrl, 'ws://192.168.1.50:3001');
+
+    // 4. Production HTTPS deployment with custom / empty port
+    const prodHttpsUrl = resolveWebSocketUrl({
+      protocol: 'https:',
+      hostname: 'thepit.example.com',
+      port: '',
+      host: 'thepit.example.com'
+    }, {});
+    assert.equal(prodHttpsUrl, 'wss://thepit.example.com:3001');
+
+    // 5. Explicit VITE_WS_URL override
+    const overrideUrl = resolveWebSocketUrl({
+      protocol: 'http:',
+      hostname: 'localhost',
+      port: '5173',
+      host: 'localhost:5173'
+    }, { VITE_WS_URL: 'wss://custom.socket.server/live' });
+    assert.equal(overrideUrl, 'wss://custom.socket.server/live');
+
+    // 6. Explicit VITE_WS_PORT override
+    const portOverrideUrl = resolveWebSocketUrl({
+      protocol: 'http:',
+      hostname: 'localhost',
+      port: '5173',
+      host: 'localhost:5173'
+    }, { VITE_WS_PORT: '4000' });
+    assert.equal(portOverrideUrl, 'ws://localhost:4000');
   });
 });
