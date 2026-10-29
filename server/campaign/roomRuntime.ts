@@ -381,13 +381,24 @@ export class RoomRuntime {
   }
 
   /**
-   * Drop an item onto the floor directly below the player.
+   * Drop an item onto the floor or highest platform directly below the player.
    */
   public dropItem(item: CampaignItem, x: number, y: number): void {
     item.carriedByPlayerId = null;
     item.roomId = this.roomId;
     item.x = x;
-    item.y = Math.min(this.loadedRoom.floorYPx, y);
+
+    // Platform snapping: find highest horizontal platform surface directly beneath player
+    let dropY = this.loadedRoom.floorYPx;
+    for (const wall of this.loadedRoom.walls) {
+      if (x >= wall.x - 8 && x <= wall.x + wall.width + 8) {
+        if (wall.y >= y - 10 && wall.y < dropY) {
+          dropY = wall.y;
+        }
+      }
+    }
+
+    item.y = dropY;
     this.groundItems.set(item.id, item);
   }
 

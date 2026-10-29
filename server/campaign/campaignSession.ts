@@ -112,11 +112,18 @@ export class CampaignSession {
 
     const token = resumeToken || crypto.randomUUID();
     this.players.set(player.id, player);
-    this.playerSessions.set(player.id, {
-      playerId: player.id,
-      name: player.name,
-      resumeToken: token
-    });
+    const existingSession = this.playerSessions.get(player.id);
+    if (existingSession) {
+      existingSession.disconnectTime = null;
+      existingSession.name = player.name;
+    } else {
+      this.playerSessions.set(player.id, {
+        playerId: player.id,
+        name: player.name,
+        resumeToken: token,
+        disconnectTime: null
+      });
+    }
 
     const room = this.getOrCreateRoomRuntime(initialRoomId);
     this.playerRoomMap.set(player.id, initialRoomId);

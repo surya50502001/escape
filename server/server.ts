@@ -33,6 +33,8 @@ export type ConnectedClient = RoomClient;
 const MAX_MESSAGES_PER_SEC = 60;
 const MAX_MESSAGE_BYTES = 4096;
 
+const socketRateLimits = new WeakMap<WebSocket, { msgCount: number; lastResetTime: number }>();
+
 /**
  * Strict boolean validator: only literal `true` is accepted.
  * Guards against loose truthy evaluations like `Boolean("false") === true`.
@@ -95,19 +97,33 @@ wss.on('connection', (ws: WebSocket) => {
       return;
     }
 
-    // Rate limit check
-    const currentRoom = roomManager.findRoomBySocket(ws);
-    const client = currentRoom ? currentRoom.clients.get(ws) : null;
+    // Unified rate limit check across all sockets (pre-auth, survival, campaign)
     const now = Date.now();
-    if (client) {
-      if (now - client.lastResetTime >= 1000) {
-        client.msgCount = 0;
-        client.lastResetTime = now;
-      }
-      client.msgCount++;
-      if (client.msgCount > MAX_MESSAGES_PER_SEC) {
-        return; // Drop excessive messages to prevent flood
-      }
+    let rl = socketRateLimits.get(ws);
+    if (!rl) {
+      rl = { msgCount: 0, lastResetTime: now };
+      socketRateLimits.set(ws, rl);
+    }
+    if (now - rl.lastResetTime >= 1000) {
+      rl.msgCount = 0;
+      rl.lastResetTime = now;
+    }
+    rl.msgCount++;
+
+    const currentRoom = roomManager.findRoomBySocket(ws);
+    const roomClient = currentRoom ? currentRoom.clients.get(ws) : null;
+    if (roomClient) {
+      roomClient.msgCount = rl.msgCount;
+      roomClient.lastResetTime = rl.lastResetTime;
+    }
+    const campaignClient = campaignManager.findClientBySocket(ws);
+    if (campaignClient) {
+      campaignClient.msgCount = rl.msgCount;
+      campaignClient.lastResetTime = rl.lastResetTime;
+    }
+
+    if (rl.msgCount > MAX_MESSAGES_PER_SEC) {
+      return; // Drop excessive messages to prevent flood
     }
 
     try {
@@ -156,17 +172,19 @@ wss.on('connection', (ws: WebSocket) => {
 
           // Check for existing player in this campaign
           let playerId = `p_${crypto.randomBytes(4).toString('hex')}`;
-          let resumeToken = token || crypto.randomUUID();
-          let existingPlayer = targetCampaign.players.get(playerId);
+          let resumeToken = crypto.randomUUID();
+          let existingPlayer: Player | undefined;
 
           // Find existing player by token if reconnecting
           let targetRoomId = 1;
+          let isReconnecting = false;
           if (token) {
             for (const [pId, sess] of targetCampaign.playerSessions.entries()) {
               if (sess.resumeToken === token) {
                 playerId = pId;
                 existingPlayer = targetCampaign.players.get(pId);
                 resumeToken = token;
+                isReconnecting = true;
                 if (sess.lastRoomId) {
                   targetRoomId = sess.lastRoomId;
                 }
@@ -174,8 +192,6 @@ wss.on('connection', (ws: WebSocket) => {
               }
             }
           }
-
-          const isReconnecting = Boolean(token && (existingPlayer || Array.from(targetCampaign.playerSessions.values()).some(s => s.resumeToken === token)));
 
           if (!isReconnecting && targetCampaign.players.size >= CAMPAIGN_MAX_PLAYERS) {
             ws.send(JSON.stringify({
@@ -229,14 +245,13 @@ wss.on('connection', (ws: WebSocket) => {
             }
           }
 
-          campaignManager.associateTokenWithCampaign(resumeToken, targetCampaign.id);
-          campaignManager.clients.set(ws, {
+          campaignManager.registerClient(ws, {
             ws,
             playerId,
             resumeToken,
             campaignId: targetCampaign.id,
-            msgCount: 0,
-            lastResetTime: now
+            msgCount: rl.msgCount,
+            lastResetTime: rl.lastResetTime
           });
 
           ws.send(JSON.stringify({

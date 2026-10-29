@@ -16,6 +16,7 @@ export class CampaignManager {
   private campaigns: Map<string, CampaignSession> = new Map();
   private tokenToCampaignId: Map<string, string> = new Map();
   public clients: Map<WebSocket, CampaignClient> = new Map();
+  private playerSockets: Map<string, WebSocket> = new Map();
 
   constructor() {
     // Default public campaign room
@@ -65,13 +66,47 @@ export class CampaignManager {
     return this.clients.get(ws);
   }
 
+  public getPlayerSocket(playerId: string): WebSocket | undefined {
+    return this.playerSockets.get(playerId);
+  }
+
+  /**
+   * Register authoritative socket ownership for a player.
+   * If a previous socket exists for this player, close it cleanly and prevent stale disconnects.
+   */
+  public registerClient(ws: WebSocket, client: CampaignClient): void {
+    const existingWs = this.playerSockets.get(client.playerId);
+    if (existingWs && existingWs !== ws) {
+      this.clients.delete(existingWs);
+      try {
+        if (existingWs.readyState === WebSocket.OPEN || existingWs.readyState === WebSocket.CONNECTING) {
+          existingWs.close(1000, 'Session resumed from another connection');
+        }
+      } catch {
+        // Ignore socket close errors
+      }
+    }
+
+    this.playerSockets.set(client.playerId, ws);
+    this.clients.set(ws, client);
+    this.associateTokenWithCampaign(client.resumeToken, client.campaignId);
+  }
+
+  /**
+   * Idempotent disconnect handler with stale socket protection.
+   * Only triggers campaign disconnect if the closing socket is still the authoritative socket for the player.
+   */
   public handleClientDisconnect(ws: WebSocket): void {
     const client = this.clients.get(ws);
     if (client) {
       this.clients.delete(ws);
-      const camp = this.campaigns.get(client.campaignId);
-      if (camp) {
-        camp.handlePlayerDisconnect(client.playerId);
+      const activeWs = this.playerSockets.get(client.playerId);
+      if (activeWs === ws) {
+        this.playerSockets.delete(client.playerId);
+        const camp = this.campaigns.get(client.campaignId);
+        if (camp) {
+          camp.handlePlayerDisconnect(client.playerId);
+        }
       }
     }
   }
@@ -112,11 +147,14 @@ export class CampaignManager {
         }
         // Only remove if it has remained empty past the defined grace period
         if (now - camp.emptySince >= gracePeriodMs) {
-          // Clean up token-to-campaign association mappings
+          // Clean up token-to-campaign association mappings and player sockets
           for (const [token, cId] of Array.from(this.tokenToCampaignId.entries())) {
             if (cId === id) {
               this.tokenToCampaignId.delete(token);
             }
+          }
+          for (const playerId of camp.playerSessions.keys()) {
+            this.playerSockets.delete(playerId);
           }
           this.campaigns.delete(id);
         }
