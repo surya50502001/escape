@@ -100,12 +100,28 @@ export class CampaignManager {
     }
   }
 
-  public cleanExpiredCampaigns(now: number = Date.now()): void {
+  public static readonly CAMPAIGN_EXPIRY_GRACE_MS = 5 * 60 * 1000; // 5-minute disconnect grace period
+
+  public cleanExpiredCampaigns(now: number = Date.now(), gracePeriodMs: number = CampaignManager.CAMPAIGN_EXPIRY_GRACE_MS): void {
     for (const [id, camp] of Array.from(this.campaigns.entries())) {
       if (id === 'CAMP-PUBLIC') continue;
-      // If no active players and created > 30 minutes ago, remove
+
       if (camp.players.size === 0) {
-        this.campaigns.delete(id);
+        if (camp.emptySince === null) {
+          camp.emptySince = now;
+        }
+        // Only remove if it has remained empty past the defined grace period
+        if (now - camp.emptySince >= gracePeriodMs) {
+          // Clean up token-to-campaign association mappings
+          for (const [token, cId] of Array.from(this.tokenToCampaignId.entries())) {
+            if (cId === id) {
+              this.tokenToCampaignId.delete(token);
+            }
+          }
+          this.campaigns.delete(id);
+        }
+      } else {
+        camp.emptySince = null;
       }
     }
   }

@@ -123,6 +123,7 @@ export interface SoundEvent {
 }
 
 export const MAX_PLAYERS = 10;
+export const CAMPAIGN_MAX_PLAYERS = 5;
 
 /** World dimensions – the scrollable 2D prison map */
 export const WORLD_WIDTH = 2800;

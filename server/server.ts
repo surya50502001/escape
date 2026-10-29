@@ -7,14 +7,14 @@ import crypto from 'crypto';
 import { GameEngine } from './gameEngine.js';
 import { RoomManager, RoomSession, RoomClient, MatchRoom } from './rooms.js';
 import { campaignManager, CampaignManager, CampaignClient } from './campaign/campaignManager.js';
-import { ClientInput, MAX_PLAYERS, Player } from './types.js';
+import { ClientInput, MAX_PLAYERS, CAMPAIGN_MAX_PLAYERS, Player } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const app = express();
-const server = createServer(app);
-const wss = new WebSocketServer({ server });
+export const app = express();
+export const server = createServer(app);
+export const wss = new WebSocketServer({ server });
 
 export const roomManager = new RoomManager();
 export const defaultRoom = roomManager.getDefaultRoom();
@@ -175,6 +175,17 @@ wss.on('connection', (ws: WebSocket) => {
             }
           }
 
+          const isReconnecting = Boolean(token && (existingPlayer || Array.from(targetCampaign.playerSessions.values()).some(s => s.resumeToken === token)));
+
+          if (!isReconnecting && targetCampaign.players.size >= CAMPAIGN_MAX_PLAYERS) {
+            ws.send(JSON.stringify({
+              type: 'ERROR',
+              code: 'ROOM_FULL',
+              message: `Campaign chamber has reached maximum capacity (${CAMPAIGN_MAX_PLAYERS} prisoners).`
+            }));
+            return;
+          }
+
           if (existingPlayer) {
             existingPlayer.name = sanitizedName;
           } else {
@@ -207,7 +218,15 @@ wss.on('connection', (ws: WebSocket) => {
               hazardCooldown: 0,
               carryingLadderId: null
             };
-            targetCampaign.addPlayer(player, targetRoomId, resumeToken);
+            const added = targetCampaign.addPlayer(player, targetRoomId, resumeToken);
+            if (!added) {
+              ws.send(JSON.stringify({
+                type: 'ERROR',
+                code: 'ROOM_FULL',
+                message: `Campaign chamber has reached maximum capacity (${CAMPAIGN_MAX_PLAYERS} prisoners).`
+              }));
+              return;
+            }
           }
 
           campaignManager.associateTokenWithCampaign(resumeToken, targetCampaign.id);

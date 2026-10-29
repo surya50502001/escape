@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { Player, ClientInput, Ladder, WallRect, SoundEvent } from '../types.js';
+import { Player, ClientInput, Ladder, WallRect, SoundEvent, CAMPAIGN_MAX_PLAYERS } from '../types.js';
 import { CampaignProjectSpec, TransitionNetworkEdge } from './types.js';
 import { loadCampaignSpec, loadRoomFromSpec, DoorTrigger, SafeZone } from './roomLoader.js';
 import { RoomRuntime, RoomPersistentState, CampaignItem, InteractionResult } from './roomRuntime.js';
@@ -72,6 +72,8 @@ export class CampaignSession {
   public campaignComplete: boolean = false;
   public intro: IntroSequence = new IntroSequence();
   public evacuationTimers: Map<number, AirlockEvacuation> = new Map();
+  public createdAt: number = Date.now();
+  public emptySince: number | null = Date.now();
 
   constructor(id?: string, spec?: CampaignProjectSpec) {
     this.id = id || `CAMP-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
@@ -98,6 +100,15 @@ export class CampaignSession {
    */
   public addPlayer(player: Player, initialRoomId: number = 1, resumeToken?: string): boolean {
     if (this.players.has(player.id)) return false;
+
+    // Enforce 5-player maximum capacity for co-op campaign mode (allows reconnects with existing session)
+    const isExistingSession = this.playerSessions.has(player.id) ||
+      Boolean(resumeToken && Array.from(this.playerSessions.values()).some(s => s.resumeToken === resumeToken));
+    if (!isExistingSession && this.players.size >= CAMPAIGN_MAX_PLAYERS) {
+      return false;
+    }
+
+    this.emptySince = null;
 
     const token = resumeToken || crypto.randomUUID();
     this.players.set(player.id, player);
@@ -391,6 +402,10 @@ export class CampaignSession {
 
     this.players.delete(playerId);
     this.playerRoomMap.delete(playerId);
+
+    if (this.players.size === 0) {
+      this.emptySince = Date.now();
+    }
   }
 
   /**
